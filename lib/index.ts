@@ -149,6 +149,16 @@ const createNodeDuplexByInterfaceIndex = ({
         const socketDuplex = createDuplexAndSteal({ socket });
         duplex.setReadable(socketDuplex);
         duplex.setWritable(socketDuplex);
+
+        if (duplex.destroyed) {
+            return;
+        }
+        duplex.emit("open");
+
+        if (duplex.destroyed) {
+            return;
+        }
+        duplex.emit("ready");
     }, 0);
 
     return duplex;
