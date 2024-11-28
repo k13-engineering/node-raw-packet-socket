@@ -90,6 +90,16 @@ const createAndSteal = ({ socket }: { socket: any }) => {
             }
 
             next();
+        },
+
+        onError: ({ error }) => {
+
+            if (error.message === "bad file descriptor") {
+                duplex.destroy(Error("interface went down"));
+                return;
+            }
+
+            duplex.destroy(error);
         }
     });
 
@@ -189,7 +199,9 @@ const createAndSteal = ({ socket }: { socket: any }) => {
             }
 
             if (bytesReceived === 0) {
-                duplex.destroy(Error("zero-sized recvmsg, interface probably went down"));
+                duplex.destroy(Error("interface went down", {
+                    cause: Error("zero-sized read from recvmsg()")
+                }));
                 return;
             }
 

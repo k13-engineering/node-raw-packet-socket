@@ -4,8 +4,8 @@
         "@types/duplexify": "^3.6.4",
         "@types/node": "^20.14.10",
         "duplexify": "^4.1.3",
-        "po6": "^0.0.6",
-        "po6-socket": "^0.0.5",
+        "po6": "file:../node-po6",
+        "po6-socket": "file:../node-po6-socket",
         "tsx": "^4.16.2"
     }
 }
