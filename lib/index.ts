@@ -1,4 +1,6 @@
+// @ts-expect-error types are missing
 import { create as createSocket } from "po6-socket";
+// @ts-expect-error types are missing
 import po6 from "po6";
 import { createAndSteal as createDuplexAndSteal } from "./socket-duplex.ts";
 import child_process from "node:child_process";
@@ -40,7 +42,7 @@ const maybeCreateSocketForInterfaceIndexAndNameResolution = () => {
     return socketForInterfaceIndexAndNameResolution;
 };
 
-const disableTcpSegmentationOffloadingUntilRebootByInterfaceName = async ({ interfaceName }): Promise<{ error: Error | undefined }> => {
+const disableTcpSegmentationOffloadingUntilRebootByInterfaceName = async ({ interfaceName }: { interfaceName: string }): Promise<{ error: Error | undefined }> => {
     return await new Promise((resolve) => {
         child_process.exec(`ethtool -K ${interfaceName} tso off`, (error) => {
             if (error) {
@@ -52,7 +54,7 @@ const disableTcpSegmentationOffloadingUntilRebootByInterfaceName = async ({ inte
     });
 };
 
-const findInterfaceNameByIndex = ({ ifindex }) => {
+const findInterfaceNameByIndex = ({ ifindex }: { ifindex: number }): { error: Error, interfaceName?: undefined } | { error: undefined, interfaceName: string } => {
     const fd = maybeCreateSocketForInterfaceIndexAndNameResolution();
 
     const ifr = Buffer.alloc(40);
@@ -88,30 +90,17 @@ const findInterfaceNameByIndex = ({ ifindex }) => {
 
 const createNodeDuplexByInterfaceIndex = ({
     ifindex,
-    disableTcpSegmentationOffloadUntilReboot = false
+    disableTcpSegmentationOffloadUntilReboot = false,
+    enablePromiscuousMode = false
 }: {
     ifindex: number,
-    disableTcpSegmentationOffloadUntilReboot?: boolean
+    disableTcpSegmentationOffloadUntilReboot?: boolean,
+    enablePromiscuousMode?: boolean
 }) => {
 
     const duplex = duplexify();
 
-    // all errors should raise "error" events, therefore we do our work in a other task
-
-    setTimeout(async () => {
-        const { error: socketError, socket } = createSocket({
-            domain: AF_PACKET,
-            type: SOCK_RAW,
-            protocol: IPPROTO_RAW,
-        });
-
-        if (socketError !== undefined) {
-            duplex.destroy(socketError);
-            return;
-        }
-
-        // TODO: fd leaks
-
+    const setup = async ({ socket }: { socket: any }): Promise<{ error: Error | undefined }> => {
         const sll_pkttype = PACKET_HOST;
 
         const sockaddr = Buffer.alloc(20);
@@ -122,16 +111,13 @@ const createNodeDuplexByInterfaceIndex = ({
 
         const { errno: bindErrno } = socket.bind({ sockaddr });
         if (bindErrno !== po6.errnoCodes.NO_ERROR) {
-            const error = po6.createErrorFromErrno({ operation: "bind()", errno: bindErrno });
-            duplex.destroy(error);
-            return;
+            return { error: po6.createErrorFromErrno({ operation: "bind()", errno: bindErrno }) };
         }
 
         if (disableTcpSegmentationOffloadUntilReboot) {
             const { error: findNameError, interfaceName } = findInterfaceNameByIndex({ ifindex });
             if (findNameError !== undefined) {
-                duplex.destroy(findNameError);
-                return;
+                return { error: findNameError };
             }
 
             // RACE! interface name might change between we find it and call ethtool
@@ -141,9 +127,51 @@ const createNodeDuplexByInterfaceIndex = ({
                 interfaceName
             });
             if (disableTSOError !== undefined) {
-                duplex.destroy(disableTSOError);
-                return;
+                return { error: disableTSOError }
             }
+        }
+
+        if (enablePromiscuousMode) {
+            const { errno: addMembershipErrno } = socket.sockopt.packet.addMembership({ ifindex, action: po6.PACKET_MR_PROMISC });
+            if (addMembershipErrno !== po6.errnoCodes.NO_ERROR) {
+                return { error: po6.createErrorFromErrno({ operation: "setsockopt()", errno: addMembershipErrno }) }
+            }
+        }
+
+        return { error: undefined };
+    };
+
+    const createAndSetupSocket = async (): Promise<{ error: Error, socket?: undefined } | { error: undefined, socket: any }> => {
+
+        const { error: socketError, socket } = createSocket({
+            domain: AF_PACKET,
+            type: SOCK_RAW,
+            protocol: IPPROTO_RAW,
+        });
+
+        if (socketError !== undefined) {
+            return { error: socketError };
+        }
+
+        const { error: setupError } = await setup({ socket });
+        if (setupError !== undefined) {
+            socket.close();
+            return { error: setupError };
+        }
+
+        return { error: undefined, socket };
+    };
+
+    // all errors should raise "error" events, therefore we do our work in a other task
+
+    setTimeout(async () => {
+
+        // TODO: what if duplex is destroyed before
+        
+        const { error: createAndSetupError, socket } = await createAndSetupSocket();
+        if (createAndSetupError !== undefined) {
+            duplex.destroy(createAndSetupError);
+            return;
         }
 
         const socketDuplex = createDuplexAndSteal({ socket });
@@ -164,7 +192,7 @@ const createNodeDuplexByInterfaceIndex = ({
     return duplex;
 };
 
-const findInterfaceIndexByName = ({ interfaceName }) => {
+const findInterfaceIndexByName = ({ interfaceName }: { interfaceName: string }) => {
 
     const fd = maybeCreateSocketForInterfaceIndexAndNameResolution();
 

@@ -1,4 +1,5 @@
 import nodeStreamModule from "node:stream";
+// @ts-expect-error types are missing
 import po6 from "po6";
 
 const errnoCodes = po6.errnoCodes;
@@ -8,7 +9,7 @@ interface IMicrotaskSchedule {
     cancel: () => void;
 };
 
-const scheduleMicrotask = (callback): IMicrotaskSchedule => {
+const scheduleMicrotask = (callback: () => void): IMicrotaskSchedule => {
     let cancelled = false;
     let done = false;
 
@@ -79,7 +80,7 @@ const createAndSteal = ({ socket }: { socket: any }) => {
     let scheduledNext = createNullSchedule();
 
     const poller = socket.poller({
-        callback: ({ events }) => {
+        callback: ({ events }: any) => {
 
             if (events.readable) {
                 socketMaybeHasMore = true;
@@ -92,7 +93,7 @@ const createAndSteal = ({ socket }: { socket: any }) => {
             next();
         },
 
-        onError: ({ error }) => {
+        onError: ({ error }: { error: Error }) => {
 
             if (error.message === "bad file descriptor") {
                 duplex.destroy(Error("interface went down"));
