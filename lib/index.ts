@@ -42,9 +42,9 @@ const maybeCreateSocketForInterfaceIndexAndNameResolution = () => {
     return socketForInterfaceIndexAndNameResolution;
 };
 
-const disableTcpSegmentationOffloadingUntilRebootByInterfaceName = async ({ interfaceName }: { interfaceName: string }): Promise<{ error: Error | undefined }> => {
+const disableNamedOffloadViaEthtoolUntilRebootByInterfaceName = async ({ interfaceName, offloadName }: { interfaceName: string, offloadName: string }): Promise<{ error: Error | undefined }> => {
     return await new Promise((resolve) => {
-        child_process.exec(`ethtool -K ${interfaceName} tso off`, (error) => {
+        child_process.exec(`ethtool -K ${interfaceName} ${offloadName} off`, (error) => {
             if (error) {
                 resolve({ error });
             } else {
@@ -52,6 +52,18 @@ const disableTcpSegmentationOffloadingUntilRebootByInterfaceName = async ({ inte
             }
         });
     });
+};
+
+const disableTcpSegmentationOffloadingUntilRebootByInterfaceName = async ({ interfaceName }: { interfaceName: string }) => {
+    return await disableNamedOffloadViaEthtoolUntilRebootByInterfaceName({ interfaceName, offloadName: "tcp-segmentation-offload" });
+};
+
+const disableGenericSegmentationOffloadUntilRebootByInterfaceName = async ({ interfaceName }: { interfaceName: string }) => {
+    return await disableNamedOffloadViaEthtoolUntilRebootByInterfaceName({ interfaceName, offloadName: "generic-segmentation-offload" });
+};
+
+const disableGenericReceiveOffloadUntilRebootByInterfaceName = async ({ interfaceName }: { interfaceName: string }) => {
+    return await disableNamedOffloadViaEthtoolUntilRebootByInterfaceName({ interfaceName, offloadName: "generic-receive-offload" });
 };
 
 const findInterfaceNameByIndex = ({ ifindex }: { ifindex: number }): { error: Error, interfaceName?: undefined } | { error: undefined, interfaceName: string } => {
@@ -91,10 +103,14 @@ const findInterfaceNameByIndex = ({ ifindex }: { ifindex: number }): { error: Er
 const createNodeDuplexByInterfaceIndex = ({
     ifindex,
     disableTcpSegmentationOffloadUntilReboot = false,
+    disableGenericSegmentationOffloadUntilReboot = false,
+    disableGenericReceiveOffloadUntilReboot = false,
     enablePromiscuousMode = false
 }: {
     ifindex: number,
     disableTcpSegmentationOffloadUntilReboot?: boolean,
+    disableGenericSegmentationOffloadUntilReboot?: boolean,
+    disableGenericReceiveOffloadUntilReboot?: boolean,
     enablePromiscuousMode?: boolean
 }) => {
 
@@ -114,7 +130,11 @@ const createNodeDuplexByInterfaceIndex = ({
             return { error: po6.createErrorFromErrno({ operation: "bind()", errno: bindErrno }) };
         }
 
-        if (disableTcpSegmentationOffloadUntilReboot) {
+        const anyEthtoolOperation = disableTcpSegmentationOffloadUntilReboot
+            || disableGenericSegmentationOffloadUntilReboot
+            || disableGenericReceiveOffloadUntilReboot;
+
+        if (anyEthtoolOperation) {
             const { error: findNameError, interfaceName } = findInterfaceNameByIndex({ ifindex });
             if (findNameError !== undefined) {
                 return { error: findNameError };
@@ -123,11 +143,31 @@ const createNodeDuplexByInterfaceIndex = ({
             // RACE! interface name might change between we find it and call ethtool
             // TODO: use netlink
 
-            const { error: disableTSOError } = await disableTcpSegmentationOffloadingUntilRebootByInterfaceName({
-                interfaceName
-            });
-            if (disableTSOError !== undefined) {
-                return { error: disableTSOError }
+            if (disableTcpSegmentationOffloadUntilReboot) {
+                const { error: disableTSOError } = await disableTcpSegmentationOffloadingUntilRebootByInterfaceName({
+                    interfaceName
+                });
+                if (disableTSOError !== undefined) {
+                    return { error: disableTSOError }
+                }
+            }
+
+            if (disableGenericSegmentationOffloadUntilReboot) {
+                const { error: disableGSOError } = await disableGenericSegmentationOffloadUntilRebootByInterfaceName({
+                    interfaceName
+                });
+                if (disableGSOError !== undefined) {
+                    return { error: disableGSOError }
+                }
+            }
+
+            if (disableGenericReceiveOffloadUntilReboot) {
+                const { error: disableGROError } = await disableGenericReceiveOffloadUntilRebootByInterfaceName({
+                    interfaceName
+                });
+                if (disableGROError !== undefined) {
+                    return { error: disableGROError }
+                }
             }
         }
 
@@ -167,7 +207,7 @@ const createNodeDuplexByInterfaceIndex = ({
     setTimeout(async () => {
 
         // TODO: what if duplex is destroyed before
-        
+
         const { error: createAndSetupError, socket } = await createAndSetupSocket();
         if (createAndSetupError !== undefined) {
             duplex.destroy(createAndSetupError);
