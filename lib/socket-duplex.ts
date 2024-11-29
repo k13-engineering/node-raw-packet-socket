@@ -256,6 +256,7 @@ const createAndSteal = ({ socket }: { socket: any }) => {
 
         destroy: (error, callback) => {
             destroyed = true;
+            poller.close();
             socket.close();
             callback(error);
         }
