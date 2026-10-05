@@ -5,7 +5,8 @@ import nodeFs from "node:fs/promises";
 import nodeOs from "node:os";
 import nodePath from "node:path";
 import nodeUtil from "node:util";
-import { compileAndCompare, type TAbi } from "ya-struct";
+import { hostAbi } from "po6";
+import { compileAndCompare } from "ya-struct";
 import {
   constants,
   createKernelAbiFor,
@@ -21,13 +22,6 @@ import {
   packet_mreq,
   sockaddr_ll,
 } from "./kernel-abi.ts";
-
-// x86_64 and arm64, the platforms the native dependencies are available for
-const hostAbi: TAbi = {
-  endianness: "little",
-  compiler: "gcc",
-  dataModel: "LP64",
-};
 
 const execFile = nodeUtil.promisify(nodeChildProcess.execFile);
 
