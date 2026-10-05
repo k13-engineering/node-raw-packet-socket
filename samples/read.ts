@@ -9,7 +9,7 @@ if (findError !== undefined) {
 }
 
 const duplex = createNodeDuplexByInterfaceIndex({
-  ifindex: ifindex!,
+  ifindex,
   disableTcpSegmentationOffloadUntilReboot: true
 });
 
