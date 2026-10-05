@@ -1,0 +1,40 @@
+{
+  "name": "@k13engineering/raw-packet-socket",
+  "type": "module",
+  "description": "Raw AF_PACKET sockets as Node.js duplex streams",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "dist/lib/index.js",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/k13-engineering/node-raw-packet-socket.git"
+  },
+  "keywords": [
+    "af_packet",
+    "packet",
+    "raw",
+    "socket",
+    "ethernet",
+    "linux",
+    "stream",
+    "typescript"
+  ],
+  "author": "Simon Kadisch",
+  "license": "LGPL 2.1",
+  "bugs": {
+    "url": "https://github.com/k13-engineering/node-raw-packet-socket/issues"
+  },
+  "homepage": "https://github.com/k13-engineering/node-raw-packet-socket#readme"
+}
