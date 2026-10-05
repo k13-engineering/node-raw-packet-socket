@@ -22,9 +22,11 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@k13engineering/uv-poll": "^0.0.6",
+    "buffer2address": "^0.1.1",
     "duplexify": "^4.1.3",
-    "po6": "file:../node-po6",
-    "po6-socket": "file:../node-po6-socket",
+    "po6": "^0.1.0",
+    "syscall-napi": "^0.2.2",
     "ya-struct": "^0.0.17"
   }
 }

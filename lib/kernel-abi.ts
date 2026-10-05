@@ -1,3 +1,4 @@
+import * as po6 from "po6";
 import { define, types, type TAbi } from "ya-struct";
 
 const int = {
@@ -171,8 +172,12 @@ const constants = {
 
 const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
   return {
+    // msghdr, iovec, socklen, constants and errno values of po6
+    po6: po6.createKernelAbiFor({ machineAbi }),
+
     sockaddr_ll: sockaddr_ll.parser({ abi: machineAbi }),
     packet_mreq: packet_mreq.parser({ abi: machineAbi }),
+    ifmap: ifmap.parser({ abi: machineAbi }),
     ifreq: defineIfreq({ machineAbi }).parser({ abi: machineAbi }),
     ifru_ifindex: ifru_ifindex.parser({ abi: machineAbi }),
     ifru_data: ifru_data.parser({ abi: machineAbi }),

@@ -1,270 +1,261 @@
-import nodeStreamModule from "node:stream";
-// @ts-expect-error types are missing
-import po6 from "po6";
+import nodeStream from "node:stream";
+import type { TErrnoCodes, TErrorWithErrno } from "po6";
+import type { TSocket } from "./socket.ts";
 
-const errnoCodes = po6.errnoCodes;
-
-interface IMicrotaskSchedule {
-    pending: () => boolean;
-    cancel: () => void;
+type TScheduledMicrotask = {
+  pending: () => boolean;
 };
 
-const scheduleMicrotask = (callback: () => void): IMicrotaskSchedule => {
-    let cancelled = false;
-    let done = false;
+const scheduleMicrotask = (callback: () => void): TScheduledMicrotask => {
+  let done = false;
 
-    Promise.resolve().then(() => {
-        if (cancelled) {
-            return;
-        }
+  queueMicrotask(() => {
+    done = true;
+    callback();
+  });
 
-        done = true;
-        callback();
-    });
-
-    const pending = () => {
-        return !done && !cancelled;
-    };
-
-    const cancel = () => {
-        cancelled = true;
-    };
-
-    return {
-        pending,
-        cancel,
-    };
+  return {
+    pending: () => {
+      return !done;
+    }
+  };
 };
 
-const createNullSchedule = (): IMicrotaskSchedule => {
-    return {
-        pending: () => false,
-        cancel: () => { },
-    };
+const nothingScheduled: TScheduledMicrotask = {
+  pending: () => {
+    return false;
+  }
 };
 
-interface ISendQueueEntry {
-    chunk: Uint8Array;
-    callback: () => void;
+type TSendQueueEntry = {
+  chunk: Uint8Array;
+  callback: () => void;
 };
+
+type TCreateErrorFromErrno = (args: { operation: string, errno: number }) => TErrorWithErrno;
 
 const assertNoReentrancy = (fn: () => void) => {
-    let entered = false;
+  let entered = false;
 
-    return () => {
-        if (entered) {
-            throw Error("reentered");
-        }
+  return () => {
+    if (entered) {
+      throw Error("reentered");
+    }
 
-        entered = true;
+    entered = true;
 
-        try {
-            fn();
-        } finally {
-            entered = false;
-        }
-    };
+    try {
+      fn();
+    } finally {
+      entered = false;
+    }
+  };
 };
 
-const createAndSteal = ({ socket }: { socket: any }) => {
+const checkSent = ({
+  errno,
+  bytesSent,
+  chunk,
+  createErrorFromErrno
+}: {
+  errno: number | undefined,
+  bytesSent: number | undefined,
+  chunk: Uint8Array,
+  createErrorFromErrno: TCreateErrorFromErrno
+}) => {
+  if (errno !== undefined) {
+    return createErrorFromErrno({ operation: "sendmsg()", errno });
+  }
 
-    let destroyed = false;
-    let readRequested = false;
-    let mayReadMore = true;
+  if (bytesSent !== chunk.length) {
+    return Error(`short write on sendmsg(), sent ${bytesSent} of ${chunk.length} bytes`);
+  }
 
-    let socketMaybeHasMore = true;
-    let socketMaybeTakesMore = true;
+  return undefined;
+};
 
-    let sendQueue: ISendQueueEntry[] = [];
+const checkReceived = ({ bytesReceived, msgFlags }: { bytesReceived: number, msgFlags: number }) => {
+  if (msgFlags !== 0) {
+    return Error(`unexpected msg_flags 0x${msgFlags.toString(16)} from recvmsg()`);
+  }
 
-    let scheduledNext = createNullSchedule();
-
-    const poller = socket.poller({
-        callback: ({ events }: any) => {
-
-            if (events.readable) {
-                socketMaybeHasMore = true;
-            }
-
-            if (events.writable) {
-                socketMaybeTakesMore = true;
-            }
-
-            next();
-        },
-
-        onError: ({ error }: { error: Error }) => {
-
-            if (error.message === "bad file descriptor") {
-                duplex.destroy(Error("interface went down"));
-                return;
-            }
-
-            duplex.destroy(error);
-        }
+  if (bytesReceived === 0) {
+    return Error("interface went down", {
+      cause: Error("zero-sized read from recvmsg()")
     });
+  }
 
-    const updatePoll = () => {
-        let readable = false;
-        let writable = false;
+  return undefined;
+};
 
-        if (sendQueue.length > 0 && !socketMaybeTakesMore) {
-            writable = true;
-        }
+type TCreateAndStealArgs = {
+  socket: TSocket;
+  errnoCodes: TErrnoCodes;
+  createErrorFromErrno: TCreateErrorFromErrno;
+};
 
-        if (mayReadMore && !socketMaybeHasMore) {
-            readable = true;
-        }
+// takes ownership of socket and closes it when the duplex is destroyed
+// eslint-disable-next-line max-statements
+const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno }: TCreateAndStealArgs): nodeStream.Duplex => {
 
-        poller.update({
-            events: {
-                readable,
-                writable,
-            }
-        });
-    };
+  // assigned below, as it drives the duplex and the socket, which call back into it
+  // eslint-disable-next-line prefer-const
+  let next: () => void;
 
-    const buffer = Buffer.alloc(64 * 1024);
+  let destroyed = false;
+  let mayReadMore = true;
 
-    const next = assertNoReentrancy(() => {
+  let socketMaybeHasMore = true;
+  let socketMaybeTakesMore = true;
 
-        if (destroyed) {
-            return;
-        }
+  let sendQueue: TSendQueueEntry[] = [];
 
-        if (socketMaybeTakesMore && sendQueue.length > 0) {
-            const { chunk, callback } = sendQueue[0];
+  let scheduledNext = nothingScheduled;
 
-            const { errno, bytesSent } = socket.sendmsg({
-                data: chunk,
-                msghdr: {
+  const receiveBuffer = new Uint8Array(64 * 1024);
 
-                },
-                flags: 0,
-            });
+  const maybeScheduleNext = () => {
+    if (scheduledNext.pending()) {
+      return;
+    }
 
-            if (errno === errnoCodes.EAGAIN) {
-                socketMaybeTakesMore = false;
-                updatePoll();
-                maybeScheduleNext();
-                return;
-            }
-
-            if (errno !== errnoCodes.NO_ERROR) {
-                const error = po6.createErrorFromErrno({ operation: "sendmsg()", errno });
-                duplex.destroy(error);
-                return;
-            }
-
-            if (bytesSent !== chunk.length) {
-                const error = new Error("short-write on sendmsg");
-                duplex.destroy(error);
-                return;
-            }
-
-            sendQueue = sendQueue.slice(1);
-            updatePoll();
-            maybeScheduleNext();
-
-            callback();
-            return;
-        }
-
-        if (socketMaybeHasMore && mayReadMore) {
-
-            const { errno, bytesReceived, msghdr } = socket.recvmsg({
-                data: buffer,
-                msghdr: {
-
-                },
-                flags: 0
-            });
-
-            if (errno === errnoCodes.EAGAIN) {
-                socketMaybeHasMore = false;
-                updatePoll();
-                maybeScheduleNext();
-                return;
-            }
-
-            if (errno !== errnoCodes.NO_ERROR) {
-                const error = po6.createErrorFromErrno({ operation: "recvmsg()", errno });
-                duplex.destroy(error);
-                return;
-            }
-
-            if (msghdr.msg_flags !== 0) {
-                const error = new Error("unexpected msg_flags on sendmsg");
-                duplex.destroy(error);
-                return;
-            }
-
-            if (bytesReceived === 0) {
-                duplex.destroy(Error("interface went down", {
-                    cause: Error("zero-sized read from recvmsg()")
-                }));
-                return;
-            }
-
-            const chunk = Buffer.alloc(bytesReceived);
-            buffer.copy(chunk, 0, 0, bytesReceived);
-
-            readRequested = false;
-            updatePoll();
-            maybeScheduleNext();
-
-            const takesMore = duplex.push(chunk);
-            mayReadMore = takesMore;
-            return;
-        }
-
-        updatePoll();
+    scheduledNext = scheduleMicrotask(() => {
+      next();
     });
+  };
 
-    const maybeScheduleNext = () => {
-        if (scheduledNext.pending()) {
-            return;
-        }
+  // eslint-disable-next-line k13-engineering/no-new
+  const duplex = new nodeStream.Duplex({
+    read: () => {
+      mayReadMore = true;
+      maybeScheduleNext();
+    },
 
-        scheduledNext = scheduleMicrotask(() => {
-            next();
-        });
-    };
+    // eslint-disable-next-line k13-engineering/prefer-single-object-parameters
+    write: (chunk: Uint8Array, encoding, callback) => {
+      sendQueue = [...sendQueue, { chunk, callback }];
+      maybeScheduleNext();
+    },
 
-    const duplex = new nodeStreamModule.Duplex({
-        read: (size) => {
-            readRequested = true;
-            mayReadMore = true;
+    final: (callback) => {
+      callback(Error("cannot end ethernet stream"));
+    },
 
-            maybeScheduleNext();
-        },
+    // eslint-disable-next-line k13-engineering/prefer-single-object-parameters
+    destroy: (error, callback) => {
+      destroyed = true;
+      // closes the poller as well
+      socket.close();
+      callback(error);
+    }
+  });
 
-        write: (chunk, encoding, callback) => {
+  const poller = socket.poller({
+    callback: ({ events }) => {
+      socketMaybeHasMore ||= events.readable;
+      socketMaybeTakesMore ||= events.writable;
 
-            // push due to performance, immutable would be better
-            sendQueue.push({
-                chunk: chunk,
-                callback: callback,
-            });
+      next();
+    },
 
-            maybeScheduleNext();
-        },
+    onError: ({ error }) => {
+      duplex.destroy(error);
+    }
+  });
 
-        final: () => {
-            throw new Error("cannot end ethernet stream");
-        },
-
-        destroy: (error, callback) => {
-            destroyed = true;
-            poller.close();
-            socket.close();
-            callback(error);
-        }
+  // waits for the socket to become readable or writable if we have to
+  const updatePoll = () => {
+    poller.update({
+      events: {
+        readable: mayReadMore && !socketMaybeHasMore,
+        writable: sendQueue.length > 0 && !socketMaybeTakesMore,
+      }
     });
+  };
 
-    return duplex;
+  const updatePollAndScheduleNext = () => {
+    updatePoll();
+    maybeScheduleNext();
+  };
+
+  const sendNext = () => {
+    const { chunk, callback } = sendQueue[0];
+
+    const { errno, bytesSent } = socket.sendmsg({ data: chunk });
+
+    if (errno === errnoCodes.EAGAIN) {
+      socketMaybeTakesMore = false;
+      updatePollAndScheduleNext();
+      return;
+    }
+
+    const sendError = checkSent({ errno, bytesSent, chunk, createErrorFromErrno });
+    if (sendError !== undefined) {
+      duplex.destroy(sendError);
+      return;
+    }
+
+    sendQueue = sendQueue.slice(1);
+    updatePollAndScheduleNext();
+
+    callback();
+  };
+
+  const receiveNext = () => {
+    const { errno, bytesReceived, msghdr } = socket.recvmsg({ data: receiveBuffer });
+
+    if (errno === errnoCodes.EAGAIN) {
+      socketMaybeHasMore = false;
+      updatePollAndScheduleNext();
+      return;
+    }
+
+    if (errno !== undefined) {
+      duplex.destroy(createErrorFromErrno({ operation: "recvmsg()", errno }));
+      return;
+    }
+
+    const receiveError = checkReceived({ bytesReceived, msgFlags: msghdr.msg_flags });
+    if (receiveError !== undefined) {
+      duplex.destroy(receiveError);
+      return;
+    }
+
+    updatePollAndScheduleNext();
+
+    // eslint-disable-next-line fp/no-mutating-methods
+    mayReadMore = duplex.push(receiveBuffer.slice(0, bytesReceived));
+  };
+
+  const maySend = () => {
+    return socketMaybeTakesMore && sendQueue.length > 0;
+  };
+
+  const mayReceive = () => {
+    return socketMaybeHasMore && mayReadMore;
+  };
+
+  next = assertNoReentrancy(() => {
+    if (destroyed) {
+      return;
+    }
+
+    if (maySend()) {
+      sendNext();
+      return;
+    }
+
+    if (mayReceive()) {
+      receiveNext();
+      return;
+    }
+
+    updatePoll();
+  });
+
+  return duplex;
 };
 
 export {
-    createAndSteal
+  createAndSteal
 };
