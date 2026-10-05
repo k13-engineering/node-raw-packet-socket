@@ -1,31 +1,7 @@
 import nodeStream from "node:stream";
 import type { TErrnoCodes, TErrorWithErrno } from "po6";
+import { assertNoReentrancy, nothingScheduled, scheduleMicrotask } from "./scheduling.ts";
 import type { TSocket } from "./socket.ts";
-
-type TScheduledMicrotask = {
-  pending: () => boolean;
-};
-
-const scheduleMicrotask = (callback: () => void): TScheduledMicrotask => {
-  let done = false;
-
-  queueMicrotask(() => {
-    done = true;
-    callback();
-  });
-
-  return {
-    pending: () => {
-      return !done;
-    }
-  };
-};
-
-const nothingScheduled: TScheduledMicrotask = {
-  pending: () => {
-    return false;
-  }
-};
 
 type TSendQueueEntry = {
   chunk: Uint8Array;
@@ -33,24 +9,6 @@ type TSendQueueEntry = {
 };
 
 type TCreateErrorFromErrno = (args: { operation: string, errno: number }) => TErrorWithErrno;
-
-const assertNoReentrancy = (fn: () => void) => {
-  let entered = false;
-
-  return () => {
-    if (entered) {
-      throw Error("reentered");
-    }
-
-    entered = true;
-
-    try {
-      fn();
-    } finally {
-      entered = false;
-    }
-  };
-};
 
 const checkSent = ({
   errno,
