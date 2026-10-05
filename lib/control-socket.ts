@@ -18,7 +18,7 @@ const formatIfreq = ({
   kernelAbi: TRawPacketKernelAbi,
   interfaceName: string,
   ifru: Uint8Array
-}) => {
+}): Uint8Array => {
   const ifr_ifru = new Uint8Array(kernelAbi.ifmap.size);
   ifr_ifru.set(ifru);
 

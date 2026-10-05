@@ -3,7 +3,7 @@ import duplexify from "duplexify";
 import { createPo6Api } from "po6";
 import { createControlSocketRunner } from "./control-socket.ts";
 import { createEthtool, type TOffloadName } from "./ethtool.ts";
-import { createInterfaceNames } from "./interface-names.ts";
+import { createInterfaceNames, type TFindInterfaceIndexResult } from "./interface-names.ts";
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
 import type { TKernel } from "./kernel.ts";
 import { createAndSteal } from "./socket-duplex.ts";
@@ -15,6 +15,13 @@ type TCreateNodeDuplexByInterfaceIndexArgs = {
   disableGenericSegmentationOffloadUntilReboot?: boolean;
   disableGenericReceiveOffloadUntilReboot?: boolean;
   enablePromiscuousMode?: boolean;
+};
+
+// spelled out, as the declaration files are generated per file and could
+// not resolve the types of the imported factories otherwise
+type TRawPacketSocketApi = {
+  createNodeDuplexByInterfaceIndex: (args: TCreateNodeDuplexByInterfaceIndexArgs) => nodeStream.Duplex;
+  findInterfaceIndexByName: (args: { interfaceName: string }) => TFindInterfaceIndexResult;
 };
 
 type TOpenSocketResult = {
@@ -59,7 +66,7 @@ const createRawPacketSocketApi = ({
 }: {
   kernel: TKernel,
   kernelAbi: TRawPacketKernelAbi
-}) => {
+}): TRawPacketSocketApi => {
 
   const { constants } = kernelAbi;
 
@@ -212,8 +219,6 @@ const createRawPacketSocketApi = ({
     findInterfaceIndexByName: interfaceNames.findInterfaceIndexByName
   };
 };
-
-type TRawPacketSocketApi = ReturnType<typeof createRawPacketSocketApi>;
 
 export type {
   TCreateNodeDuplexByInterfaceIndexArgs,
