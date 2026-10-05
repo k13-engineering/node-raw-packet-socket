@@ -93,23 +93,9 @@ const createInterfaceNames = ({
     return result;
   };
 
-  const findInterfaceNameByIndex = ({ ifindex }: { ifindex: number }): TFindInterfaceNameResult => {
-    const { error, result } = controlSocketRunner.withControlSocket({
-      callback: ({ fd }) => {
-        return findInterfaceNameByIndexUsing({ fd, ifindex });
-      }
-    });
-
-    if (error !== undefined) {
-      return { error, interfaceName: undefined };
-    }
-
-    return result;
-  };
-
   return {
     findInterfaceIndexByName,
-    findInterfaceNameByIndex
+    findInterfaceNameByIndexUsing
   };
 };
 

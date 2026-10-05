@@ -32,6 +32,13 @@ const UInt32 = {
   fixedAbi: {}
 } as const;
 
+const UInt64 = {
+  type: "integer",
+  sizeInBits: 64,
+  signed: false,
+  fixedAbi: {}
+} as const;
+
 // __be16, e.g. an ethertype
 const BigEndianUInt16 = {
   type: "integer",
@@ -41,6 +48,7 @@ const BigEndianUInt16 = {
 } as const;
 
 const IFNAMSIZ = 16;
+const ETH_GSTRING_LEN = 32;
 
 // struct sockaddr_ll from <linux/if_packet.h>
 const sockaddr_ll = define({
@@ -146,6 +154,116 @@ const ethtool_value = define({
   }
 });
 
+// struct ethtool_sset_info from <linux/ethtool.h>, followed by the flexible
+// array data of ethtool_sset_length entries
+const ethtool_sset_info = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "cmd", definition: UInt32 },
+      { name: "reserved", definition: UInt32 },
+      { name: "sset_mask", definition: UInt64 },
+    ]
+  }
+});
+
+// an entry of ethtool_sset_info.data, the length of a string set
+const ethtool_sset_length = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "length", definition: UInt32 },
+    ]
+  }
+});
+
+// struct ethtool_gstrings from <linux/ethtool.h>, followed by the flexible
+// array data of ethtool_gstring entries
+const ethtool_gstrings = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "cmd", definition: UInt32 },
+      { name: "string_set", definition: UInt32 },
+      { name: "len", definition: UInt32 },
+    ]
+  }
+});
+
+// an entry of ethtool_gstrings.data, a string of ETH_GSTRING_LEN bytes
+const ethtool_gstring = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "string", definition: types.ascii({ length: ETH_GSTRING_LEN }) },
+    ]
+  }
+});
+
+// struct ethtool_gfeatures from <linux/ethtool.h>, followed by the flexible
+// array features of struct ethtool_get_features_block
+const ethtool_gfeatures = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "cmd", definition: UInt32 },
+      { name: "size", definition: UInt32 },
+    ]
+  }
+});
+
+// struct ethtool_get_features_block from <linux/ethtool.h>
+const ethtool_get_features_block = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "available", definition: UInt32 },
+      { name: "requested", definition: UInt32 },
+      { name: "active", definition: UInt32 },
+      { name: "never_changed", definition: UInt32 },
+    ]
+  }
+});
+
+// struct ethtool_sfeatures from <linux/ethtool.h>, followed by the flexible
+// array features of struct ethtool_set_features_block
+const ethtool_sfeatures = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "cmd", definition: UInt32 },
+      { name: "size", definition: UInt32 },
+    ]
+  }
+});
+
+// struct ethtool_set_features_block from <linux/ethtool.h>
+const ethtool_set_features_block = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "valid", definition: UInt32 },
+      { name: "requested", definition: UInt32 },
+    ]
+  }
+});
+
 // Linux shares these values between x86, arm and arm64
 const constants = {
   AF_INET: 2n,
@@ -162,12 +280,15 @@ const constants = {
   SIOCGIFINDEX: 0x8933n,
   SIOCETHTOOL: 0x8946n,
 
+  ETHTOOL_GSTRINGS: 0x1bn,
   ETHTOOL_GTSO: 0x1en,
-  ETHTOOL_STSO: 0x1fn,
   ETHTOOL_GGSO: 0x23n,
-  ETHTOOL_SGSO: 0x24n,
   ETHTOOL_GGRO: 0x2bn,
-  ETHTOOL_SGRO: 0x2cn,
+  ETHTOOL_GSSET_INFO: 0x37n,
+  ETHTOOL_GFEATURES: 0x3an,
+  ETHTOOL_SFEATURES: 0x3bn,
+
+  ETH_SS_FEATURES: 4n,
 } as const;
 
 const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
@@ -182,6 +303,14 @@ const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
     ifru_ifindex: ifru_ifindex.parser({ abi: machineAbi }),
     ifru_data: ifru_data.parser({ abi: machineAbi }),
     ethtool_value: ethtool_value.parser({ abi: machineAbi }),
+    ethtool_sset_info: ethtool_sset_info.parser({ abi: machineAbi }),
+    ethtool_sset_length: ethtool_sset_length.parser({ abi: machineAbi }),
+    ethtool_gstrings: ethtool_gstrings.parser({ abi: machineAbi }),
+    ethtool_gstring: ethtool_gstring.parser({ abi: machineAbi }),
+    ethtool_gfeatures: ethtool_gfeatures.parser({ abi: machineAbi }),
+    ethtool_get_features_block: ethtool_get_features_block.parser({ abi: machineAbi }),
+    ethtool_sfeatures: ethtool_sfeatures.parser({ abi: machineAbi }),
+    ethtool_set_features_block: ethtool_set_features_block.parser({ abi: machineAbi }),
     constants,
   };
 };
@@ -202,4 +331,12 @@ export {
   ifru_ifindex,
   ifru_data,
   ethtool_value,
+  ethtool_sset_info,
+  ethtool_sset_length,
+  ethtool_gstrings,
+  ethtool_gstring,
+  ethtool_gfeatures,
+  ethtool_get_features_block,
+  ethtool_sfeatures,
+  ethtool_set_features_block,
 };

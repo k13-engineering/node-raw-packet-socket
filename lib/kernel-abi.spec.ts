@@ -10,6 +10,12 @@ import {
   constants,
   createKernelAbiFor,
   defineIfreq,
+  ethtool_get_features_block,
+  ethtool_gfeatures,
+  ethtool_gstrings,
+  ethtool_set_features_block,
+  ethtool_sfeatures,
+  ethtool_sset_info,
   ethtool_value,
   ifmap,
   packet_mreq,
@@ -87,6 +93,39 @@ describe("kernel ABI", () => {
 
     it("should lay out struct ethtool_value like the kernel headers", async () => {
       await assertLayoutMatches({ structDefinition: ethtool_value.definition, cStructName: "ethtool_value" });
+    }).timeout(30_000);
+
+    const ethtoolStructures = [
+      { name: "ethtool_sset_info", definition: ethtool_sset_info.definition },
+      { name: "ethtool_gstrings", definition: ethtool_gstrings.definition },
+      { name: "ethtool_gfeatures", definition: ethtool_gfeatures.definition },
+      { name: "ethtool_get_features_block", definition: ethtool_get_features_block.definition },
+      { name: "ethtool_sfeatures", definition: ethtool_sfeatures.definition },
+      { name: "ethtool_set_features_block", definition: ethtool_set_features_block.definition },
+    ];
+
+    ethtoolStructures.forEach(({ name, definition }) => {
+      it(`should lay out struct ${name} like the kernel headers`, async () => {
+        await assertLayoutMatches({ structDefinition: definition, cStructName: name });
+      }).timeout(30_000);
+    });
+
+    it("should size the entries of the flexible arrays like the kernel headers", async () => {
+      const kernelAbi = createKernelAbiFor({ machineAbi: hostAbi });
+
+      const { output } = await compileAndRun({
+        sourceCode: `#include <stdio.h>
+${globalCode}
+
+int main(void) {
+  struct ethtool_sset_info sset_info;
+  printf("%zu %zu\\n", sizeof(sset_info.data[0]), (size_t) ETH_GSTRING_LEN);
+  return 0;
+}
+`
+      });
+
+      assert.strictEqual(output, `${kernelAbi.ethtool_sset_length.size} ${kernelAbi.ethtool_gstring.size}\n`);
     }).timeout(30_000);
 
     it("should place the members of ifr_ifru like the C headers", async () => {

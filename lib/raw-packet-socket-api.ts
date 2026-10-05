@@ -1,15 +1,13 @@
-import nodeChildProcess from "node:child_process";
 import type nodeStream from "node:stream";
 import duplexify from "duplexify";
 import { createPo6Api } from "po6";
 import { createControlSocketRunner } from "./control-socket.ts";
+import { createEthtool, type TOffloadName } from "./ethtool.ts";
 import { createInterfaceNames } from "./interface-names.ts";
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
 import type { TKernel } from "./kernel.ts";
 import { createAndSteal } from "./socket-duplex.ts";
 import { createSocketFactory, type TSocket } from "./socket.ts";
-
-type TOffloadName = "tcp-segmentation-offload" | "generic-segmentation-offload" | "generic-receive-offload";
 
 type TCreateNodeDuplexByInterfaceIndexArgs = {
   ifindex: number;
@@ -40,40 +38,9 @@ const offloadsToDisableFor = ({
 
   return offloads.filter(([, disable]) => {
     return disable;
-  }).map(([offloadName]) => {
-    return offloadName;
+  }).map(([offload]) => {
+    return offload;
   });
-};
-
-const disableOffloadViaEthtool = async ({
-  interfaceName,
-  offloadName
-}: {
-  interfaceName: string,
-  offloadName: TOffloadName
-}): Promise<{ error: Error | undefined }> => {
-  return await new Promise((resolve) => {
-    nodeChildProcess.execFile("ethtool", ["-K", interfaceName, offloadName, "off"], (error) => {
-      resolve({ error: error ?? undefined });
-    });
-  });
-};
-
-const disableOffloadsViaEthtool = async ({
-  interfaceName,
-  offloads
-}: {
-  interfaceName: string,
-  offloads: TOffloadName[]
-}): Promise<{ error: Error | undefined }> => {
-  for (const offloadName of offloads) {
-    const { error } = await disableOffloadViaEthtool({ interfaceName, offloadName });
-    if (error !== undefined) {
-      return { error };
-    }
-  }
-
-  return { error: undefined };
 };
 
 // "open" and "ready" for compatibility with net.Socket
@@ -104,7 +71,8 @@ const createRawPacketSocketApi = ({
 
   const socketFactory = createSocketFactory({ po6, kernelAbi, createPoller: kernel.createPoller });
   const controlSocketRunner = createControlSocketRunner({ po6, kernelAbi });
-  const { findInterfaceIndexByName, findInterfaceNameByIndex } = createInterfaceNames({ po6, kernelAbi, controlSocketRunner });
+  const interfaceNames = createInterfaceNames({ po6, kernelAbi, controlSocketRunner });
+  const ethtool = createEthtool({ po6, kernelAbi, memory: kernel.memory });
 
   const bindToInterface = ({ socket, ifindex }: { socket: TSocket, ifindex: number }) => {
     const sockaddr = kernelAbi.sockaddr_ll.format({
@@ -127,20 +95,31 @@ const createRawPacketSocketApi = ({
     return { error: undefined };
   };
 
-  const disableOffloads = async ({ ifindex, offloads }: { ifindex: number, offloads: TOffloadName[] }) => {
+  const disableOffloadsUsing = ({ fd, ifindex, offloads }: { fd: number, ifindex: number, offloads: TOffloadName[] }) => {
+    const { error, interfaceName } = interfaceNames.findInterfaceNameByIndexUsing({ fd, ifindex });
+    if (error !== undefined) {
+      return { error };
+    }
+
+    // RACE! the interface might be renamed before the ioctls address it by
+    // name, as ethtool does as well
+    // TODO: use ethtool netlink, which addresses interfaces by index
+
+    return ethtool.disableOffloads({ fd, interfaceName, offloads });
+  };
+
+  const disableOffloads = ({ ifindex, offloads }: { ifindex: number, offloads: TOffloadName[] }) => {
     if (offloads.length === 0) {
       return { error: undefined };
     }
 
-    const { error: findNameError, interfaceName } = findInterfaceNameByIndex({ ifindex });
-    if (findNameError !== undefined) {
-      return { error: findNameError };
-    }
+    const { error, result } = controlSocketRunner.withControlSocket({
+      callback: ({ fd }) => {
+        return disableOffloadsUsing({ fd, ifindex, offloads });
+      }
+    });
 
-    // RACE! interface name might change between we find it and call ethtool
-    // TODO: use netlink
-
-    return await disableOffloadsViaEthtool({ interfaceName, offloads });
+    return error === undefined ? result : { error };
   };
 
   const enablePromiscuousMode = ({ socket, ifindex }: { socket: TSocket, ifindex: number }) => {
@@ -156,7 +135,7 @@ const createRawPacketSocketApi = ({
     return { error: undefined };
   };
 
-  const setup = async ({ socket, args }: { socket: TSocket, args: TCreateNodeDuplexByInterfaceIndexArgs }) => {
+  const setup = ({ socket, args }: { socket: TSocket, args: TCreateNodeDuplexByInterfaceIndexArgs }) => {
     const { ifindex } = args;
 
     const { error: bindError } = bindToInterface({ socket, ifindex });
@@ -164,7 +143,7 @@ const createRawPacketSocketApi = ({
       return { error: bindError };
     }
 
-    const { error: offloadsError } = await disableOffloads({ ifindex, offloads: offloadsToDisableFor(args) });
+    const { error: offloadsError } = disableOffloads({ ifindex, offloads: offloadsToDisableFor(args) });
     if (offloadsError !== undefined) {
       return { error: offloadsError };
     }
@@ -176,7 +155,7 @@ const createRawPacketSocketApi = ({
     return enablePromiscuousMode({ socket, ifindex });
   };
 
-  const openSocket = async ({ args }: { args: TCreateNodeDuplexByInterfaceIndexArgs }): Promise<TOpenSocketResult> => {
+  const openSocket = ({ args }: { args: TCreateNodeDuplexByInterfaceIndexArgs }): TOpenSocketResult => {
     // protocol 0 receives nothing until bind() selects the interface and ETH_P_ALL
     const { error: socketError, socket } = socketFactory.create({
       domain: constants.AF_PACKET,
@@ -188,7 +167,7 @@ const createRawPacketSocketApi = ({
       return { error: socketError, socket: undefined };
     }
 
-    const { error: setupError } = await setup({ socket, args });
+    const { error: setupError } = setup({ socket, args });
     if (setupError !== undefined) {
       socket.close();
       return { error: setupError, socket: undefined };
@@ -202,13 +181,13 @@ const createRawPacketSocketApi = ({
     const duplex = duplexify();
 
     // all errors should raise "error" events, therefore we do our work in another task
-    setTimeout(async () => {
+    setTimeout(() => {
 
       if (duplex.destroyed) {
         return;
       }
 
-      const { error, socket } = await openSocket({ args });
+      const { error, socket } = openSocket({ args });
       if (error !== undefined) {
         duplex.destroy(error);
         return;
@@ -230,8 +209,7 @@ const createRawPacketSocketApi = ({
 
   return {
     createNodeDuplexByInterfaceIndex,
-    findInterfaceIndexByName,
-    findInterfaceNameByIndex
+    findInterfaceIndexByName: interfaceNames.findInterfaceIndexByName
   };
 };
 
