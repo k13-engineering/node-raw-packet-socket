@@ -1,12 +1,13 @@
 import nodeChildProcess from "node:child_process";
 import type nodeStream from "node:stream";
 import duplexify from "duplexify";
-import type { TPo6Api } from "po6";
+import { createPo6Api } from "po6";
 import { createControlSocketRunner } from "./control-socket.ts";
 import { createInterfaceNames } from "./interface-names.ts";
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
+import type { TKernel } from "./kernel.ts";
 import { createAndSteal } from "./socket-duplex.ts";
-import { createSocketFactory, type TCreatePoller, type TSocket } from "./socket.ts";
+import { createSocketFactory, type TSocket } from "./socket.ts";
 
 type TOffloadName = "tcp-segmentation-offload" | "generic-segmentation-offload" | "generic-receive-offload";
 
@@ -86,18 +87,22 @@ const emitOpenAndReady = ({ duplex }: { duplex: nodeStream.Duplex }) => {
 };
 
 const createRawPacketSocketApi = ({
-  po6,
-  kernelAbi,
-  createPoller
+  kernel,
+  kernelAbi
 }: {
-  po6: TPo6Api,
-  kernelAbi: TRawPacketKernelAbi,
-  createPoller: TCreatePoller
+  kernel: TKernel,
+  kernelAbi: TRawPacketKernelAbi
 }) => {
 
   const { constants } = kernelAbi;
 
-  const socketFactory = createSocketFactory({ po6, kernelAbi, createPoller });
+  const po6 = createPo6Api({
+    kernelInterface: kernel.kernelInterface,
+    kernelAbi: kernelAbi.po6,
+    memory: kernel.memory
+  });
+
+  const socketFactory = createSocketFactory({ po6, kernelAbi, createPoller: kernel.createPoller });
   const controlSocketRunner = createControlSocketRunner({ po6, kernelAbi });
   const { findInterfaceIndexByName, findInterfaceNameByIndex } = createInterfaceNames({ po6, kernelAbi, controlSocketRunner });
 
