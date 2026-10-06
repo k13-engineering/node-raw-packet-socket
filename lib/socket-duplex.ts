@@ -10,6 +10,20 @@ type TSendQueueEntry = {
 
 type TCreateErrorFromErrno = (args: { operation: string, errno: number }) => TErrorWithErrno;
 
+// restores what the kernel took out of received frames, from the control messages of recvmsg()
+type TFrameRestorer = {
+  controlSize: number;
+  restore: (args: { frame: Uint8Array, control: Uint8Array }) => Uint8Array;
+};
+
+// leaves the frames as the kernel delivers them
+const keepFrames: TFrameRestorer = {
+  controlSize: 0,
+  restore: ({ frame }) => {
+    return frame;
+  }
+};
+
 const checkSent = ({
   errno,
   bytesSent,
@@ -50,11 +64,12 @@ type TCreateAndStealArgs = {
   socket: TSocket;
   errnoCodes: TErrnoCodes;
   createErrorFromErrno: TCreateErrorFromErrno;
+  frameRestorer: TFrameRestorer;
 };
 
 // takes ownership of socket and closes it when the duplex is destroyed
 // eslint-disable-next-line max-statements
-const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno }: TCreateAndStealArgs): nodeStream.Duplex => {
+const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno, frameRestorer }: TCreateAndStealArgs): nodeStream.Duplex => {
 
   // assigned below, as it drives the duplex and the socket, which call back into it
   // eslint-disable-next-line prefer-const
@@ -71,6 +86,7 @@ const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno }: TCreateAnd
   let scheduledNext = nothingScheduled;
 
   const receiveBuffer = new Uint8Array(64 * 1024);
+  const controlBuffer = new Uint8Array(frameRestorer.controlSize);
 
   const maybeScheduleNext = () => {
     if (scheduledNext.pending()) {
@@ -160,7 +176,7 @@ const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno }: TCreateAnd
   };
 
   const receiveNext = () => {
-    const { errno, bytesReceived, msghdr } = socket.recvmsg({ data: receiveBuffer });
+    const { errno, bytesReceived, msghdr } = socket.recvmsg({ data: receiveBuffer, control: controlBuffer });
 
     if (errno === errnoCodes.EAGAIN) {
       socketMaybeHasMore = false;
@@ -181,8 +197,13 @@ const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno }: TCreateAnd
 
     updatePollAndScheduleNext();
 
+    const frame = frameRestorer.restore({
+      frame: receiveBuffer.slice(0, bytesReceived),
+      control: controlBuffer.subarray(0, msghdr.msg_controllen)
+    });
+
     // eslint-disable-next-line fp/no-mutating-methods
-    mayReadMore = duplex.push(receiveBuffer.slice(0, bytesReceived));
+    mayReadMore = duplex.push(frame);
   };
 
   const maySend = () => {
@@ -214,6 +235,11 @@ const createAndSteal = ({ socket, errnoCodes, createErrorFromErrno }: TCreateAnd
   return duplex;
 };
 
+export type {
+  TFrameRestorer
+};
+
 export {
-  createAndSteal
+  createAndSteal,
+  keepFrames
 };

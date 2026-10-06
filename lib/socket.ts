@@ -41,7 +41,7 @@ type TSocketPoller = {
 
 type TSocket = {
   bind: (args: { sockaddr: Uint8Array }) => TBindResult;
-  recvmsg: (args: { data: Uint8Array }) => TRecvmsgResult;
+  recvmsg: (args: { data: Uint8Array, control?: Uint8Array }) => TRecvmsgResult;
   sendmsg: (args: { data: Uint8Array }) => TSendmsgResult;
   poller: (args: {
     callback: (args: { events: TSocketEvents }) => void,
@@ -129,8 +129,8 @@ const createSocketFactory = ({
       return po6.bind({ fd, sockaddr });
     };
 
-    const recvmsg: TSocket["recvmsg"] = ({ data }) => {
-      return po6.recvmsg({ fd, data });
+    const recvmsg: TSocket["recvmsg"] = ({ data, control }) => {
+      return po6.recvmsg({ fd, data, msghdr: { msg_control: control } });
     };
 
     const sendmsg: TSocket["sendmsg"] = ({ data }) => {

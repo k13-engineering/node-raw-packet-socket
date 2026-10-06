@@ -6,9 +6,10 @@ import { createEthtool, unknownOffloadIn, type TOffloadName } from "./ethtool.ts
 import { createInterfaceNames, type TFindInterfaceIndexResult } from "./interface-names.ts";
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
 import type { TKernel } from "./kernel.ts";
-import { createAndSteal } from "./socket-duplex.ts";
+import { createAndSteal, keepFrames } from "./socket-duplex.ts";
 import { createSocketSetup, type TSocketSetupOptions } from "./socket-setup.ts";
 import { createSocketFactory, type TSocket } from "./socket.ts";
+import { createVlanTagRestorer } from "./vlan-tags.ts";
 
 type TCreateNodeDuplexByInterfaceIndexArgs = {
   ifindex: number;
@@ -21,6 +22,7 @@ type TCreateNodeDuplexByInterfaceIndexArgs = {
   disableTransmitChecksumOffloadUntilReboot?: boolean;
   enablePromiscuousMode?: boolean;
   ignoreOutgoingFrames?: boolean;
+  restoreVlanTags?: boolean;
 };
 
 type TDisableOffloadsUntilRebootArgs = {
@@ -69,6 +71,7 @@ const socketSetupOptionsFor = (args: TCreateNodeDuplexByInterfaceIndexArgs): TSo
     offloads: offloadsToDisableFor(args),
     enablePromiscuousMode: args.enablePromiscuousMode === true,
     ignoreOutgoingFrames: args.ignoreOutgoingFrames === true,
+    restoreVlanTags: args.restoreVlanTags === true,
   };
 };
 
@@ -102,6 +105,7 @@ const createRawPacketSocketApi = ({
   const controlSocketRunner = createControlSocketRunner({ po6, kernelAbi });
   const interfaceNames = createInterfaceNames({ po6, kernelAbi, controlSocketRunner });
   const ethtool = createEthtool({ po6, kernelAbi, memory: kernel.memory });
+  const vlanTagRestorer = createVlanTagRestorer({ kernelAbi });
 
   const disableOffloadsUsing = ({ fd, ifindex, offloads }: { fd: number, ifindex: number, offloads: TOffloadName[] }) => {
     const { error, interfaceName } = interfaceNames.findInterfaceNameByIndexUsing({ fd, ifindex });
@@ -173,7 +177,8 @@ const createRawPacketSocketApi = ({
       const socketDuplex = createAndSteal({
         socket,
         errnoCodes: kernelAbi.po6.errnoCodes,
-        createErrorFromErrno: po6.createErrorFromErrno
+        createErrorFromErrno: po6.createErrorFromErrno,
+        frameRestorer: args.restoreVlanTags === true ? vlanTagRestorer : keepFrames
       });
       duplex.setReadable(socketDuplex);
       duplex.setWritable(socketDuplex);

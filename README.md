@@ -71,8 +71,11 @@ The options are:
 | `disableTransmitChecksumOffloadUntilReboot` | like `ethtool -K <interface> tx off` |
 | `enablePromiscuousMode` | `PACKET_MR_PROMISC` membership for as long as the socket is open |
 | `ignoreOutgoingFrames` | `PACKET_IGNORE_OUTGOING`, only receive the frames arriving on the interface, Linux 4.20 or newer |
+| `restoreVlanTags` | put the VLAN tags back into the received frames, from `PACKET_AUXDATA` like libpcap |
 
 Besides the frames arriving on the interface, the stream receives the frames the host sends on it, except the ones written to the stream itself. `ignoreOutgoingFrames` leaves them out.
+
+The kernel takes the outermost VLAN tag out of every frame it receives before a packet socket sees it, also without hardware offload, and keeps it out of the frames it sends with VLAN offload. `restoreVlanTags` puts it back between the source address and the ethertype, with its TPID, e.g. `0x8100` for 802.1Q or `0x88a8` for 802.1ad.
 
 The receive offloads merge frames before the socket sees them. The transmit offloads leave the outgoing frames of the host unfinished where the socket sees them: oversized with segmentation offloads, with unfinished checksums with checksum offload. Turning off checksum offload makes the kernel turn off TCP and UDP segmentation offload as well.
 
@@ -114,7 +117,7 @@ The unit tests run against a fake kernel from `lib/test-support/`, which emulate
 - `lib/kernel-abi.spec.ts` compiles C programs to compare the structures and constants with the headers, so it needs `gcc` and the kernel headers
 - `lib/kernel.spec.ts` and `lib/index.spec.ts` use unprivileged syscalls of the host
 - `lib/build.spec.ts` builds the package and type-checks a consumer against its declarations
-- `lib/end-to-end.spec.ts` exchanges frames over a veth pair in a user and network namespace of its own. It needs `unshare` and `ip`, and skips where unprivileged user namespaces are not allowed.
+- `lib/end-to-end.spec.ts` exchanges frames, also tagged ones, over a veth pair in a user and network namespace of its own. It needs `unshare` and `ip`, and skips where unprivileged user namespaces are not allowed.
 
 ## License
 

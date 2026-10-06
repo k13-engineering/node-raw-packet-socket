@@ -10,7 +10,7 @@ import {
   disableOffloadsUntilReboot,
   findInterfaceIndexByName
 } from "../index.ts";
-import { createFrame } from "./environment.ts";
+import { createFrame, tagFrame } from "./environment.ts";
 
 const ifindexOf = ({ interfaceName }: { interfaceName: string }) => {
   const { error, ifindex } = findInterfaceIndexByName({ interfaceName });
@@ -67,6 +67,7 @@ const receiver = createNodeDuplexByInterfaceIndex({
   disableUdpSegmentationOffloadUntilReboot: true,
   disableTransmitChecksumOffloadUntilReboot: true,
   enablePromiscuousMode: true,
+  restoreVlanTags: true,
 });
 
 // before the sender opens its socket on the interface
@@ -86,10 +87,10 @@ const watcher = createNodeDuplexByInterfaceIndex({ ifindex: ifindexOf({ interfac
 await Promise.all([ready({ duplex: receiver }), ready({ duplex: sender }), ready({ duplex: watcher })]);
 
 // the next frame with the experimental ethertype, ignoring e.g. IPv6 router solicitations
-const nextExperimentalFrame = ({ duplex }: { duplex: nodeStream.Duplex }) => {
+const nextExperimentalFrame = ({ duplex, ethertypeOffset = 12 }: { duplex: nodeStream.Duplex, ethertypeOffset?: number }) => {
   return new Promise<Uint8Array>((resolve) => {
     duplex.on("data", (packet: Uint8Array) => {
-      if (packet[12] === 0x88 && packet[13] === 0xb5) {
+      if (packet[ethertypeOffset] === 0x88 && packet[ethertypeOffset + 1] === 0xb5) {
         resolve(packet);
       }
     });
@@ -107,12 +108,21 @@ sender.write(createFrame({ payload: "hello over veth" }));
 
 const packet = await received;
 
+// VLAN 42, which the kernel takes out of the frame on veth0
+const receivedTagged = nextExperimentalFrame({ duplex: receiver, ethertypeOffset: 16 });
+sender.write(tagFrame({ frame: createFrame({ payload: "tagged over veth" }), tci: 42 }));
+const taggedPacket = await receivedTagged;
+
 // the frame of the sender is queued on the watcher by now, unless it is ignored
 receiver.write(createFrame({ payload: "reply over veth" }));
 
 const result = {
   received: payloadOf({ packet }),
   receivedLength: packet.length,
+  vlanTag: Array.from(taggedPacket.subarray(12, 16), (byte) => {
+    return byte.toString(16).padStart(2, "0");
+  }).join(""),
+  taggedLength: taggedPacket.length,
   watched: payloadOf({ packet: await watched }),
   promiscuity: promiscuityOf({ interfaceName: "veth0" }),
   offloads: offloadsOf({ interfaceName: "veth0" }),

@@ -9,6 +9,7 @@ type TSocketSetupOptions = {
   offloads: TOffloadName[];
   enablePromiscuousMode: boolean;
   ignoreOutgoingFrames: boolean;
+  restoreVlanTags: boolean;
 };
 
 type TSetupResult = {
@@ -65,20 +66,31 @@ const createSocketSetup = ({
     return { error: undefined };
   };
 
-  const ignoreOutgoingFrames = ({ socket }: { socket: TSocket }) => {
-    const { errno } = socket.sockopt.packet.setInt({ optname: constants.PACKET_IGNORE_OUTGOING, value: 1 });
+  const enableOption = ({ socket, optname, name }: { socket: TSocket, optname: bigint, name: string }) => {
+    const { errno } = socket.sockopt.packet.setInt({ optname, value: 1 });
 
     if (errno !== undefined) {
-      return { error: po6.createErrorFromErrno({ operation: "setsockopt(PACKET_IGNORE_OUTGOING)", errno }) };
+      return { error: po6.createErrorFromErrno({ operation: `setsockopt(${name})`, errno }) };
     }
 
     return { error: undefined };
   };
 
-  // the socket receives frames from bind() on, so the options that select them come first
+  // the socket receives frames from bind() on, so its options come first
   const setupSteps: TSetupStep[] = [
     ({ socket, options }) => {
-      return options.ignoreOutgoingFrames ? ignoreOutgoingFrames({ socket }) : { error: undefined };
+      if (!options.ignoreOutgoingFrames) {
+        return { error: undefined };
+      }
+
+      return enableOption({ socket, optname: constants.PACKET_IGNORE_OUTGOING, name: "PACKET_IGNORE_OUTGOING" });
+    },
+    ({ socket, options }) => {
+      if (!options.restoreVlanTags) {
+        return { error: undefined };
+      }
+
+      return enableOption({ socket, optname: constants.PACKET_AUXDATA, name: "PACKET_AUXDATA" });
     },
     ({ socket, options }) => {
       return bindToInterface({ socket, ifindex: options.ifindex });

@@ -34,6 +34,15 @@ type TFakeInterface = {
   sentFrames: Uint8Array[];
 };
 
+// a frame in the receive queue of a socket, with the VLAN tag the kernel took out of it
+type TFakeQueuedFrame = {
+  frame: Uint8Array;
+  vlan: { tpid: bigint, tci: bigint } | undefined;
+};
+
+// sets an int option of a socket
+type TSetIntOption = (args: { on: boolean }) => void;
+
 type TFakePoller = {
   armed: TPollEvents | undefined;
   closed: boolean;
@@ -47,7 +56,8 @@ type TFakeFile = {
   boundIfindex: number | undefined;
   promiscuousIfindexes: number[];
   ignoresOutgoing: boolean;
-  receiveQueue: Uint8Array[];
+  auxdata: boolean;
+  receiveQueue: TFakeQueuedFrame[];
   pollErrorCode: number | undefined;
   poller: TFakePoller | undefined;
 };
@@ -136,7 +146,13 @@ const isNeverChanged = (feature: TFakeFeature) => {
 };
 
 const ETHTOOL_F_UNSUPPORTED = 1n;
+const MSG_CTRUNC = 0x08n;
 const MSG_TRUNC = 0x20n;
+const TP_STATUS_USER = 0x01n;
+const TP_STATUS_VLAN_TPID_VALID = 0x40n;
+
+// the TPIDs of 802.1Q and 802.1ad
+const vlanTpids = [0x8100n, 0x88a8n];
 const bitsPerBlock = 32;
 
 const createFakeKernel = ({
@@ -340,6 +356,7 @@ const createFakeKernel = ({
       boundIfindex: undefined,
       promiscuousIfindexes: [],
       ignoresOutgoing: false,
+      auxdata: false,
       receiveQueue: [],
       pollErrorCode: undefined,
       poller: undefined,
@@ -428,13 +445,23 @@ const createFakeKernel = ({
       return fail({ errno: errnoCodes.ENOPROTOOPT });
     }
 
-    if (optname === constants.PACKET_IGNORE_OUTGOING) {
+    const intOptions = new Map<bigint, TSetIntOption>([
+      [constants.PACKET_IGNORE_OUTGOING, ({ on }) => {
+        file.ignoresOutgoing = on;
+      }],
+      [constants.PACKET_AUXDATA, ({ on }) => {
+        file.auxdata = on;
+      }],
+    ]);
+
+    const setIntOption = intOptions.get(optname);
+    if (setIntOption !== undefined) {
       // like packet_setsockopt(), which refuses less than an int
       if (optval.length < kernelAbi.sockopt_int.size) {
         return fail({ errno: errnoCodes.EINVAL });
       }
 
-      file.ignoresOutgoing = kernelAbi.sockopt_int.parse({ data: optval }).value !== 0n;
+      setIntOption({ on: kernelAbi.sockopt_int.parse({ data: optval }).value !== 0n });
       return ok();
     }
 
@@ -484,6 +511,47 @@ const createFakeKernel = ({
     return { header, data };
   };
 
+  // like packet_recvmsg() with PACKET_AUXDATA, which adds struct tpacket_auxdata as control message
+  const writeAuxdata = ({
+    header,
+    queued: { frame, vlan }
+  }: {
+    header: ReturnType<typeof kernelAbi.po6.msghdr.parse>,
+    queued: TFakeQueuedFrame
+  }) => {
+    const { controlMessageLayout } = kernelAbi;
+    const dataLength = kernelAbi.tpacket_auxdata.size;
+    const space = controlMessageLayout.spaceFor({ dataLength });
+    const control = pinnedBuffers.get(header.msg_control);
+
+    // like put_cmsg(), which truncates what does not fit
+    if (control === undefined || Number(header.msg_controllen) < space) {
+      return { controllen: 0n, flags: MSG_CTRUNC };
+    }
+
+    control.set(kernelAbi.cmsghdr.format({
+      value: {
+        cmsg_len: BigInt(controlMessageLayout.lengthFor({ dataLength })),
+        cmsg_level: kernelAbi.po6.constants.SOL_PACKET,
+        cmsg_type: constants.PACKET_AUXDATA,
+      }
+    }));
+
+    control.set(kernelAbi.tpacket_auxdata.format({
+      value: {
+        tp_status: vlan === undefined ? TP_STATUS_USER : TP_STATUS_USER | constants.TP_STATUS_VLAN_VALID | TP_STATUS_VLAN_TPID_VALID,
+        tp_len: BigInt(frame.length),
+        tp_snaplen: BigInt(frame.length),
+        tp_mac: 0n,
+        tp_net: 14n,
+        tp_vlan_tci: vlan?.tci ?? 0n,
+        tp_vlan_tpid: vlan?.tpid ?? 0n,
+      }
+    }), controlMessageLayout.dataOffset);
+
+    return { controllen: BigInt(space), flags: 0n };
+  };
+
   const recvmsg: TLinuxKernelInterface["recvmsg"] = ({ fd, msghdr }) => {
     record({ operation: "recvmsg", fd });
 
@@ -506,16 +574,20 @@ const createFakeKernel = ({
       return fail({ errno: errnoCodes.EAGAIN });
     }
 
-    const [frame, ...rest] = file.receiveQueue;
+    const [queued, ...rest] = file.receiveQueue;
     file.receiveQueue = rest;
 
+    const { frame } = queued;
     const bytesReceived = Math.min(frame.length, message.data.length);
     message.data.set(frame.subarray(0, bytesReceived));
+
+    const { controllen, flags } = file.auxdata ? writeAuxdata({ header: message.header, queued }) : { controllen: 0n, flags: 0n };
 
     msghdr.set(kernelAbi.po6.msghdr.format({
       value: {
         ...message.header,
-        msg_flags: frame.length > message.data.length ? MSG_TRUNC : 0n
+        msg_controllen: controllen,
+        msg_flags: (frame.length > message.data.length ? MSG_TRUNC : 0n) | flags
       }
     }));
 
@@ -897,10 +969,25 @@ const createFakeKernel = ({
     });
   };
 
-  // a frame arrives on the interface
+  // like the kernel, which takes the outermost VLAN tag out of every frame it receives (skb_vlan_untag())
+  const untag = ({ frame }: { frame: Uint8Array }): TFakeQueuedFrame => {
+    const tpid = frame.length >= 18 ? BigInt((frame[12] << 8) | frame[13]) : undefined;
+    if (tpid === undefined || !vlanTpids.includes(tpid)) {
+      return { frame, vlan: undefined };
+    }
+
+    const untagged = new Uint8Array(frame.length - 4);
+    untagged.set(frame.subarray(0, 12));
+    untagged.set(frame.subarray(16), 12);
+
+    return { frame: untagged, vlan: { tpid, tci: BigInt((frame[14] << 8) | frame[15]) } };
+  };
+
+  // a frame arrives on the interface, as it is on the wire
   const receiveFrame = ({ ifindex, frame }: { ifindex: number, frame: Uint8Array }) => {
+    const queued = untag({ frame });
     packetSocketsOn({ ifindex }).forEach((file) => {
-      file.receiveQueue = [...file.receiveQueue, frame];
+      file.receiveQueue = [...file.receiveQueue, queued];
     });
     schedulePollerCheck();
   };
@@ -910,7 +997,7 @@ const createFakeKernel = ({
     packetSocketsOn({ ifindex }).filter((file) => {
       return !file.ignoresOutgoing;
     }).forEach((file) => {
-      file.receiveQueue = [...file.receiveQueue, frame];
+      file.receiveQueue = [...file.receiveQueue, { frame, vlan: undefined }];
     });
     schedulePollerCheck();
   };

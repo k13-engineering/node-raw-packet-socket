@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "mocha";
 import type nodeStream from "node:stream";
-import { createAndSteal } from "./socket-duplex.ts";
-import { createSocketFactory } from "./socket.ts";
+import { createAndSteal, keepFrames } from "./socket-duplex.ts";
+import { createSocketFactory, type TSocket } from "./socket.ts";
 import {
   assertKernelClean,
   createFrame,
   createTestEnvironment,
   defined,
   errnoCodes,
-  kernelAbi
+  kernelAbi,
+  tagFrame
 } from "./test-support/environment.ts";
 import type { TFakeKernel } from "./test-support/fake-kernel.ts";
 
@@ -65,6 +66,7 @@ const ticks = async ({ count }: { count: number }) => {
 describe("socket duplex", () => {
 
   let fakeKernel: TFakeKernel;
+  let socket: TSocket;
   let duplex: nodeStream.Duplex;
 
   beforeEach(() => {
@@ -72,10 +74,12 @@ describe("socket duplex", () => {
     fakeKernel = environment.fakeKernel;
 
     const socketFactory = createSocketFactory({ po6: environment.po6, kernelAbi, createPoller: fakeKernel.kernel.createPoller });
-    const { socket } = socketFactory.create({
-      domain: constants.AF_PACKET,
-      type: constants.SOCK_RAW | constants.SOCK_NONBLOCK,
-      protocol: 0n
+    socket = defined({
+      value: socketFactory.create({
+        domain: constants.AF_PACKET,
+        type: constants.SOCK_RAW | constants.SOCK_NONBLOCK,
+        protocol: 0n
+      }).socket
     });
 
     const sockaddr = kernelAbi.sockaddr_ll.format({
@@ -89,12 +93,13 @@ describe("socket duplex", () => {
         sll_addr: new Uint8Array(8),
       }
     });
-    defined({ value: socket }).bind({ sockaddr });
+    socket.bind({ sockaddr });
 
     duplex = createAndSteal({
-      socket: defined({ value: socket }),
+      socket,
       errnoCodes,
-      createErrorFromErrno: environment.po6.createErrorFromErrno
+      createErrorFromErrno: environment.po6.createErrorFromErrno,
+      frameRestorer: keepFrames
     });
   });
 
@@ -230,6 +235,20 @@ describe("socket duplex", () => {
       });
 
       assert.strictEqual(error.message, "unexpected msg_flags 0x20 from recvmsg()");
+    });
+
+    it("should fail with control messages that do not fit", async () => {
+      // the duplex leaves no room for them
+      socket.sockopt.packet.setInt({ optname: constants.PACKET_AUXDATA, value: 1 });
+
+      const error = await expectError({
+        trigger: () => {
+          fakeKernel.receiveFrame({ ifindex: eth0, frame: tagFrame({ frame: createFrame({ payload: "tagged" }), tci: 42 }) });
+          duplex.resume();
+        }
+      });
+
+      assert.strictEqual(error.message, "unexpected msg_flags 0x8 from recvmsg()");
     });
 
     it("should fail with the interface going down on zero-sized reads", async () => {

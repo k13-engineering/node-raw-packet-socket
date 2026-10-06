@@ -31,7 +31,7 @@ const describeIfNamespaces = networkNamespacesAvailable() ? describe : describe.
 
 describeIfNamespaces("end to end", () => {
 
-  it("should exchange frames over a veth pair with offloads disabled and in promiscuous mode", () => {
+  it("should exchange frames over a veth pair with every option", () => {
     const output = runInNetworkNamespace({
       script: [
         "ip link add veth0 type veth peer name veth1",
@@ -46,6 +46,8 @@ describeIfNamespaces("end to end", () => {
     assert.strictEqual(result.received, "hello over veth");
     assert.strictEqual(result.receivedLength, 60);
     assert.strictEqual(result.watched, "reply over veth");
+    assert.strictEqual(result.vlanTag, "8100002a");
+    assert.strictEqual(result.taggedLength, 64);
     assert.strictEqual(result.promiscuity, 1);
     assert.strictEqual(result.promiscuityAfterClose, 0);
 

@@ -9,7 +9,8 @@ import {
   assertKernelClean,
   createFrame,
   errnoCodes,
-  kernelAbi
+  kernelAbi,
+  tagFrame
 } from "./test-support/environment.ts";
 import { createFakeKernel, type TFakeKernel } from "./test-support/fake-kernel.ts";
 
@@ -203,6 +204,37 @@ describe("raw packet socket API", () => {
       await destroy({ duplex });
     });
 
+    const receiveOne = async ({ duplex, frame }: { duplex: nodeStream.Duplex, frame: Uint8Array }) => {
+      const received = new Promise<Uint8Array>((resolve) => {
+        duplex.once("data", resolve);
+      });
+      fakeKernel.receiveFrame({ ifindex: eth0, frame });
+      return new Uint8Array(await received);
+    };
+
+    it("should deliver frames without their VLAN tag by default, as the kernel does", async () => {
+      const duplex = await open({ ifindex: eth0 });
+
+      const frame = createFrame({ payload: "tagged" });
+      assert.deepStrictEqual(await receiveOne({ duplex, frame: tagFrame({ frame, tci: 42 }) }), frame);
+
+      await destroy({ duplex });
+    });
+
+    it("should restore the VLAN tags if asked to", async () => {
+      const duplex = await open({ ifindex: eth0, restoreVlanTags: true });
+
+      assert.deepStrictEqual(operations().slice(0, 3), ["socket:AF_PACKET", "setsockopt", "bind"]);
+
+      const tagged = tagFrame({ frame: createFrame({ payload: "tagged" }), tci: 42 });
+      assert.deepStrictEqual(await receiveOne({ duplex, frame: tagged }), tagged);
+
+      const untagged = createFrame({ payload: "untagged" });
+      assert.deepStrictEqual(await receiveOne({ duplex, frame: untagged }), untagged);
+
+      await destroy({ duplex });
+    });
+
     it("should not open a socket if destroyed right away", async () => {
       const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
 
@@ -276,6 +308,14 @@ describe("raw packet socket API", () => {
         const error = await openFailure({ ifindex: eth0, ignoreOutgoingFrames: true });
 
         assert.strictEqual(error.message, "setsockopt(PACKET_IGNORE_OUTGOING) failed with ENOPROTOOPT: Protocol not available");
+      });
+
+      it("should fail if the VLAN tags cannot be restored", async () => {
+        fakeKernel.injectErrno({ operation: "setsockopt", errno: errnoCodes.ENOPROTOOPT });
+
+        const error = await openFailure({ ifindex: eth0, restoreVlanTags: true });
+
+        assert.strictEqual(error.message, "setsockopt(PACKET_AUXDATA) failed with ENOPROTOOPT: Protocol not available");
       });
 
       it("should fail if the promiscuous mode cannot be enabled", async () => {

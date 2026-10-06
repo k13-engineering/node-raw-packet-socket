@@ -25,6 +25,13 @@ const unsignedLong = {
   fixedAbi: {}
 } as const;
 
+const UInt16 = {
+  type: "integer",
+  sizeInBits: 16,
+  signed: false,
+  fixedAbi: {}
+} as const;
+
 const UInt32 = {
   type: "integer",
   sizeInBits: 32,
@@ -76,6 +83,64 @@ const sockopt_int = define({
     fixedAbi: {},
     fields: [
       { name: "value", definition: int },
+    ]
+  }
+});
+
+// struct tpacket_auxdata from <linux/if_packet.h>
+const tpacket_auxdata = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "tp_status", definition: UInt32 },
+      { name: "tp_len", definition: UInt32 },
+      { name: "tp_snaplen", definition: UInt32 },
+      { name: "tp_mac", definition: UInt16 },
+      { name: "tp_net", definition: UInt16 },
+      { name: "tp_vlan_tci", definition: UInt16 },
+      { name: "tp_vlan_tpid", definition: UInt16 },
+    ]
+  }
+});
+
+// struct cmsghdr from <sys/socket.h>, with cmsg_len as size_t, which has
+// the size of unsigned long on LP64 and ILP32, like in po6
+const cmsghdr = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "cmsg_len", definition: unsignedLong },
+      { name: "cmsg_level", definition: int },
+      { name: "cmsg_type", definition: int },
+    ]
+  }
+});
+
+// size_t, to which control messages are aligned
+const size_t = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "value", definition: unsignedLong },
+    ]
+  }
+});
+
+// the 802.1Q tag between the source address and the ethertype of a frame
+const vlan_tag = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "tpid", definition: BigEndianUInt16 },
+      { name: "tci", definition: BigEndianUInt16 },
     ]
   }
 });
@@ -288,7 +353,10 @@ const constants = {
 
   ETH_P_ALL: 0x0003n,
 
+  PACKET_AUXDATA: 8n,
   PACKET_IGNORE_OUTGOING: 23n,
+
+  TP_STATUS_VLAN_VALID: 0x10n,
 
   SIOCGIFNAME: 0x8910n,
   SIOCGIFINDEX: 0x8933n,
@@ -308,6 +376,28 @@ const constants = {
   ETH_FLAG_LRO: 0x8000n,
 } as const;
 
+// CMSG_ALIGN(), CMSG_LEN(), CMSG_SPACE() and CMSG_DATA() of <sys/socket.h>
+const createControlMessageLayoutFor = ({ machineAbi }: { machineAbi: TAbi }) => {
+  const alignment = size_t.parser({ abi: machineAbi }).size;
+
+  const align = ({ length }: { length: number }) => {
+    return Math.ceil(length / alignment) * alignment;
+  };
+
+  // the offset of the data in a control message
+  const dataOffset = align({ length: cmsghdr.parser({ abi: machineAbi }).size });
+
+  return {
+    dataOffset,
+    lengthFor: ({ dataLength }: { dataLength: number }) => {
+      return dataOffset + dataLength;
+    },
+    spaceFor: ({ dataLength }: { dataLength: number }) => {
+      return dataOffset + align({ length: dataLength });
+    },
+  };
+};
+
 const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
   return {
     // msghdr, iovec, socklen, constants and errno values of po6
@@ -316,6 +406,10 @@ const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
     sockaddr_ll: sockaddr_ll.parser({ abi: machineAbi }),
     sockopt_int: sockopt_int.parser({ abi: machineAbi }),
     packet_mreq: packet_mreq.parser({ abi: machineAbi }),
+    tpacket_auxdata: tpacket_auxdata.parser({ abi: machineAbi }),
+    cmsghdr: cmsghdr.parser({ abi: machineAbi }),
+    controlMessageLayout: createControlMessageLayoutFor({ machineAbi }),
+    vlan_tag: vlan_tag.parser({ abi: machineAbi }),
     ifmap: ifmap.parser({ abi: machineAbi }),
     ifreq: defineIfreq({ machineAbi }).parser({ abi: machineAbi }),
     ifru_ifindex: ifru_ifindex.parser({ abi: machineAbi }),
@@ -346,6 +440,9 @@ export {
   sockaddr_ll,
   sockopt_int,
   packet_mreq,
+  tpacket_auxdata,
+  cmsghdr,
+  vlan_tag,
   ifmap,
   ifru_ifindex,
   ifru_data,

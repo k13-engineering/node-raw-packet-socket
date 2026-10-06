@@ -8,6 +8,7 @@ import nodeUtil from "node:util";
 import { hostAbi } from "po6";
 import { compileAndCompare } from "ya-struct";
 import {
+  cmsghdr,
   constants,
   createKernelAbiFor,
   defineIfreq,
@@ -21,6 +22,7 @@ import {
   ifmap,
   packet_mreq,
   sockaddr_ll,
+  tpacket_auxdata,
 } from "./kernel-abi.ts";
 
 const execFile = nodeUtil.promisify(nodeChildProcess.execFile);
@@ -75,6 +77,39 @@ describe("kernel ABI", () => {
 
     it("should lay out struct packet_mreq like the kernel headers", async () => {
       await assertLayoutMatches({ structDefinition: packet_mreq.definition, cStructName: "packet_mreq" });
+    }).timeout(30_000);
+
+    it("should lay out struct tpacket_auxdata like the kernel headers", async () => {
+      await assertLayoutMatches({ structDefinition: tpacket_auxdata.definition, cStructName: "tpacket_auxdata" });
+    }).timeout(30_000);
+
+    it("should lay out struct cmsghdr like the C headers", async () => {
+      await assertLayoutMatches({ structDefinition: cmsghdr.definition, cStructName: "cmsghdr" });
+    }).timeout(30_000);
+
+    it("should lay out control messages like the macros of the C headers", async () => {
+      const { controlMessageLayout, tpacket_auxdata: auxdata } = createKernelAbiFor({ machineAbi: hostAbi });
+
+      const { output } = await compileAndRun({
+        sourceCode: `#include <stdio.h>
+${globalCode}
+
+int main(void) {
+  struct cmsghdr cmsg;
+  printf("%zu\\n", (size_t) (CMSG_DATA(&cmsg) - (unsigned char *) &cmsg));
+  printf("%zu %zu\\n", (size_t) CMSG_LEN(sizeof(struct tpacket_auxdata)), (size_t) CMSG_SPACE(sizeof(struct tpacket_auxdata)));
+  printf("%zu %zu\\n", (size_t) CMSG_LEN(1), (size_t) CMSG_SPACE(1));
+  return 0;
+}
+`
+      });
+
+      assert.strictEqual(output, [
+        `${controlMessageLayout.dataOffset}`,
+        `${controlMessageLayout.lengthFor({ dataLength: auxdata.size })} ${controlMessageLayout.spaceFor({ dataLength: auxdata.size })}`,
+        `${controlMessageLayout.lengthFor({ dataLength: 1 })} ${controlMessageLayout.spaceFor({ dataLength: 1 })}`,
+        "",
+      ].join("\n"));
     }).timeout(30_000);
 
     it("should lay out struct ifmap like the C headers", async () => {

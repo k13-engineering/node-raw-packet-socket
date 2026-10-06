@@ -7,7 +7,8 @@ import {
   createTestEnvironment,
   defined,
   errnoCodes,
-  kernelAbi
+  kernelAbi,
+  tagFrame
 } from "./test-support/environment.ts";
 import type { TFakeKernel } from "./test-support/fake-kernel.ts";
 
@@ -179,6 +180,25 @@ describe("socket", () => {
 
       fakeKernel.sendFrameOfHost({ ifindex: eth0, frame: createFrame({ payload: "outgoing" }) });
       assert.strictEqual(socket.recvmsg({ data: new Uint8Array(100) }).errno, errnoCodes.EAGAIN);
+
+      socket.close();
+    });
+
+    it("should receive control messages once enabled", () => {
+      const socket = createBoundPacketSocket();
+      socket.sockopt.packet.setInt({ optname: constants.PACKET_AUXDATA, value: 1 });
+
+      fakeKernel.receiveFrame({ ifindex: eth0, frame: tagFrame({ frame: createFrame({ payload: "tagged" }), tci: 42 }) });
+
+      const control = new Uint8Array(64);
+      const { msghdr } = socket.recvmsg({ data: new Uint8Array(100), control });
+
+      const auxdataLength = kernelAbi.tpacket_auxdata.size;
+      assert.strictEqual(msghdr?.msg_controllen, kernelAbi.controlMessageLayout.spaceFor({ dataLength: auxdataLength }));
+      assert.strictEqual(kernelAbi.cmsghdr.parse({ data: control }).cmsg_type, constants.PACKET_AUXDATA);
+
+      const auxdata = kernelAbi.tpacket_auxdata.parse({ data: control.subarray(kernelAbi.controlMessageLayout.dataOffset) });
+      assert.strictEqual(auxdata.tp_vlan_tci, 42n);
 
       socket.close();
     });

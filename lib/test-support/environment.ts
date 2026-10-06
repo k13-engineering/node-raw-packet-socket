@@ -37,6 +37,11 @@ const createFrame = ({ payload, length = 60 }: { payload: string, length?: numbe
   return frame;
 };
 
+// the frame with an 802.1Q tag, or another with its TPID, between the addresses and the ethertype
+const tagFrame = ({ frame, tpid = 0x8100, tci }: { frame: Uint8Array, tpid?: number, tci: number }) => {
+  return Uint8Array.from([...frame.subarray(0, 12), tpid >> 8, tpid & 0xff, tci >> 8, tci & 0xff, ...frame.subarray(12)]);
+};
+
 const defined = <T>({ value }: { value: T | undefined }): T => {
   assert.notStrictEqual(value, undefined);
   return value as T;
@@ -48,5 +53,6 @@ export {
   createTestEnvironment,
   assertKernelClean,
   createFrame,
+  tagFrame,
   defined
 };
