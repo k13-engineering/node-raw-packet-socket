@@ -12,12 +12,16 @@ const rawPacketSocketApi = createRawPacketSocketApi({
 const createNodeDuplexByInterfaceIndex: TRawPacketSocketApi["createNodeDuplexByInterfaceIndex"] =
   rawPacketSocketApi.createNodeDuplexByInterfaceIndex;
 
+const disableOffloadsUntilReboot: TRawPacketSocketApi["disableOffloadsUntilReboot"] = rawPacketSocketApi.disableOffloadsUntilReboot;
+
 const findInterfaceIndexByName: TRawPacketSocketApi["findInterfaceIndexByName"] = rawPacketSocketApi.findInterfaceIndexByName;
 
 export {
   createNodeDuplexByInterfaceIndex,
+  disableOffloadsUntilReboot,
   findInterfaceIndexByName
 };
 
-export type { TCreateNodeDuplexByInterfaceIndexArgs } from "./raw-packet-socket-api.ts";
+export type { TCreateNodeDuplexByInterfaceIndexArgs, TDisableOffloadsUntilRebootArgs } from "./raw-packet-socket-api.ts";
+export type { TOffloadName } from "./ethtool.ts";
 export type { TFindInterfaceIndexResult } from "./interface-names.ts";

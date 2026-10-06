@@ -23,6 +23,7 @@ npm install @k13engineering/raw-packet-socket
 ```ts
 import {
   createNodeDuplexByInterfaceIndex,
+  disableOffloadsUntilReboot,
   findInterfaceIndexByName
 } from "@k13engineering/raw-packet-socket";
 
@@ -75,6 +76,17 @@ The receive offloads merge frames before the socket sees them. The transmit offl
 The offloads stay disabled until the interface goes away, e.g. on reboot. Like `ethtool`, the ioctls address the interface by name, so renaming it while the socket is set up affects the wrong interface or fails.
 
 The stream reports the interface going down as `Error("interface went down")`.
+
+`disableOffloadsUntilReboot()` disables offloads of an interface without opening a socket on it. On a macvlan interface, for example, the frames are merged on its parent already:
+
+```ts
+const { error } = disableOffloadsUntilReboot({
+  ifindex: parentIfindex,
+  offloads: ["generic-receive-offload", "rx-gro-hw", "large-receive-offload"],
+});
+```
+
+It takes the names `ethtool -k` shows: `tx-checksumming`, `tcp-segmentation-offload`, `tx-udp-segmentation`, `generic-segmentation-offload`, `generic-receive-offload`, `rx-gro-hw` and `large-receive-offload`. Like `findInterfaceIndexByName()`, it returns `{ error }` instead of throwing.
 
 ## How it works
 

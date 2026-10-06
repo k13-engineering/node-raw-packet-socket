@@ -22,8 +22,10 @@ const buildPackage = ({ outDirectory }: { outDirectory: string }) => {
 // a consumer of the built package, which must type-check against its declaration files
 const consumerSource = `import {
   createNodeDuplexByInterfaceIndex,
+  disableOffloadsUntilReboot,
   findInterfaceIndexByName,
-  type TCreateNodeDuplexByInterfaceIndexArgs
+  type TCreateNodeDuplexByInterfaceIndexArgs,
+  type TOffloadName
 } from "./lib/index.js";
 
 const result = findInterfaceIndexByName({ interfaceName: "lo" });
@@ -31,7 +33,13 @@ if (result.error === undefined) {
   const ifindex: number = result.ifindex;
   const args: TCreateNodeDuplexByInterfaceIndexArgs = { ifindex, enablePromiscuousMode: true };
   createNodeDuplexByInterfaceIndex(args).destroy();
+
+  const offloads: TOffloadName[] = ["generic-receive-offload", "rx-gro-hw"];
+  const { error }: { error: Error | undefined } = disableOffloadsUntilReboot({ ifindex, offloads });
 }
+
+// @ts-expect-error only known offloads
+disableOffloadsUntilReboot({ ifindex: 1, offloads: ["no-such-offload"] });
 
 // @ts-expect-error the declarations must not fall back to any
 findInterfaceIndexByName({ interfaceName: 1 });

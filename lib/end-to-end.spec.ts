@@ -54,5 +54,9 @@ describeIfNamespaces("end to end", () => {
         assert.match(line, /: off/);
       });
     }
+
+    if (result.offloadsWithoutSocket !== undefined) {
+      assert.deepStrictEqual(result.offloadsWithoutSocket, ["tx-checksumming: off"]);
+    }
   }).timeout(30_000);
 });

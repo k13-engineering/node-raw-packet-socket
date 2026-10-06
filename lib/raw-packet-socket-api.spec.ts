@@ -250,4 +250,39 @@ describe("raw packet socket API", () => {
       });
     });
   });
+
+  describe("disableOffloadsUntilReboot", () => {
+    it("should disable offloads without opening a packet socket", () => {
+      const { error } = api.disableOffloadsUntilReboot({ ifindex: eth0, offloads: ["generic-receive-offload", "rx-gro-hw"] });
+
+      assert.strictEqual(error, undefined);
+
+      const { activeFeatures } = fakeKernel.interfaceState({ name: "eth0" });
+      assert.ok(!activeFeatures.includes("rx-gro"));
+      assert.ok(!activeFeatures.includes("rx-gro-hw"));
+      assert.ok(activeFeatures.includes("rx-lro"));
+      assert.deepStrictEqual(operations().slice(0, 3), ["socket:AF_INET", "SIOCGIFNAME", "SIOCETHTOOL"]);
+      assert.ok(!operations().includes("socket:AF_PACKET"));
+    });
+
+    it("should not talk to the kernel without offloads", () => {
+      assert.deepStrictEqual(api.disableOffloadsUntilReboot({ ifindex: eth0, offloads: [] }), { error: undefined });
+
+      assert.deepStrictEqual(fakeKernel.calls(), []);
+    });
+
+    it("should fail for unknown interfaces", () => {
+      const { error } = api.disableOffloadsUntilReboot({ ifindex: 42, offloads: ["rx-gro-hw"] });
+
+      assert.strictEqual(error?.message, "interface index 42 not found");
+    });
+
+    it("should reject unknown offloads before talking to the kernel", () => {
+      // @ts-expect-error as from JavaScript
+      const { error } = api.disableOffloadsUntilReboot({ ifindex: eth0, offloads: ["generic-receive-offload", "toString"] });
+
+      assert.strictEqual(error?.message, `unknown offload "toString"`);
+      assert.deepStrictEqual(fakeKernel.calls(), []);
+    });
+  });
 });

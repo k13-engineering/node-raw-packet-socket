@@ -77,6 +77,13 @@ const offloadDefinitions: { [offload in TOffloadName]: TOffloadDefinition } = {
 
 const bitsPerBlock = 32;
 
+// the first of the offloads that is not known, e.g. from JavaScript
+const unknownOffloadIn = ({ offloads }: { offloads: string[] }) => {
+  return offloads.find((offload) => {
+    return !Object.hasOwn(offloadDefinitions, offload);
+  });
+};
+
 // like in ethtool, a "*" matches any part of the name, also an empty one
 const featureNameMatches = ({ name, pattern }: { name: string, pattern: string }) => {
   const [prefix, suffix] = pattern.split("*");
@@ -490,5 +497,6 @@ export type {
 };
 
 export {
-  createEthtool
+  createEthtool,
+  unknownOffloadIn
 };

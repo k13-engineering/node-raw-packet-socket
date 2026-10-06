@@ -2,7 +2,7 @@ import type nodeStream from "node:stream";
 import duplexify from "duplexify";
 import { createPo6Api } from "po6";
 import { createControlSocketRunner } from "./control-socket.ts";
-import { createEthtool, type TOffloadName } from "./ethtool.ts";
+import { createEthtool, unknownOffloadIn, type TOffloadName } from "./ethtool.ts";
 import { createInterfaceNames, type TFindInterfaceIndexResult } from "./interface-names.ts";
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
 import type { TKernel } from "./kernel.ts";
@@ -21,10 +21,16 @@ type TCreateNodeDuplexByInterfaceIndexArgs = {
   enablePromiscuousMode?: boolean;
 };
 
+type TDisableOffloadsUntilRebootArgs = {
+  ifindex: number;
+  offloads: TOffloadName[];
+};
+
 // spelled out, as the declaration files are generated per file and could
 // not resolve the types of the imported factories otherwise
 type TRawPacketSocketApi = {
   createNodeDuplexByInterfaceIndex: (args: TCreateNodeDuplexByInterfaceIndexArgs) => nodeStream.Duplex;
+  disableOffloadsUntilReboot: (args: TDisableOffloadsUntilRebootArgs) => { error: Error | undefined };
   findInterfaceIndexByName: (args: { interfaceName: string }) => TFindInterfaceIndexResult;
 };
 
@@ -219,14 +225,26 @@ const createRawPacketSocketApi = ({
     return duplex;
   };
 
+  // without a packet socket, e.g. for the parent of a macvlan interface
+  const disableOffloadsUntilReboot: TRawPacketSocketApi["disableOffloadsUntilReboot"] = ({ ifindex, offloads }) => {
+    const unknownOffload = unknownOffloadIn({ offloads });
+    if (unknownOffload !== undefined) {
+      return { error: Error(`unknown offload "${unknownOffload}"`) };
+    }
+
+    return disableOffloads({ ifindex, offloads });
+  };
+
   return {
     createNodeDuplexByInterfaceIndex,
+    disableOffloadsUntilReboot,
     findInterfaceIndexByName: interfaceNames.findInterfaceIndexByName
   };
 };
 
 export type {
   TCreateNodeDuplexByInterfaceIndexArgs,
+  TDisableOffloadsUntilRebootArgs,
   TRawPacketSocketApi
 };
 

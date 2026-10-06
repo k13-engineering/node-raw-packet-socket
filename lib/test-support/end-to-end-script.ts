@@ -5,7 +5,11 @@
 import nodeChildProcess from "node:child_process";
 import nodeProcess from "node:process";
 import type nodeStream from "node:stream";
-import { createNodeDuplexByInterfaceIndex, findInterfaceIndexByName } from "../index.ts";
+import {
+  createNodeDuplexByInterfaceIndex,
+  disableOffloadsUntilReboot,
+  findInterfaceIndexByName
+} from "../index.ts";
 import { createFrame } from "./environment.ts";
 
 const ifindexOf = ({ interfaceName }: { interfaceName: string }) => {
@@ -65,6 +69,15 @@ const receiver = createNodeDuplexByInterfaceIndex({
   enablePromiscuousMode: true,
 });
 
+// before the sender opens its socket on the interface
+const { error: disableError } = disableOffloadsUntilReboot({
+  ifindex: ifindexOf({ interfaceName: "veth1" }),
+  offloads: ["tx-checksumming"]
+});
+if (disableError !== undefined) {
+  throw disableError;
+}
+
 const sender = createNodeDuplexByInterfaceIndex({ ifindex: ifindexOf({ interfaceName: "veth1" }) });
 
 await Promise.all([ready({ duplex: receiver }), ready({ duplex: sender })]);
@@ -89,6 +102,9 @@ const result = {
   receivedLength: packet.length,
   promiscuity: promiscuityOf({ interfaceName: "veth0" }),
   offloads: offloadsOf({ interfaceName: "veth0" }),
+  offloadsWithoutSocket: offloadsOf({ interfaceName: "veth1" })?.filter((line) => {
+    return line.startsWith("tx-checksumming:");
+  }),
 };
 
 const closed = [receiver, sender].map((duplex) => {
