@@ -7,6 +7,7 @@ import { createInterfaceNames, type TFindInterfaceIndexResult } from "./interfac
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
 import type { TKernel } from "./kernel.ts";
 import { createAndSteal } from "./socket-duplex.ts";
+import { createSocketSetup, type TSocketSetupOptions } from "./socket-setup.ts";
 import { createSocketFactory, type TSocket } from "./socket.ts";
 
 type TCreateNodeDuplexByInterfaceIndexArgs = {
@@ -61,6 +62,14 @@ const offloadsToDisableFor = (args: TCreateNodeDuplexByInterfaceIndexArgs): TOff
   });
 };
 
+const socketSetupOptionsFor = (args: TCreateNodeDuplexByInterfaceIndexArgs): TSocketSetupOptions => {
+  return {
+    ifindex: args.ifindex,
+    offloads: offloadsToDisableFor(args),
+    enablePromiscuousMode: args.enablePromiscuousMode === true,
+  };
+};
+
 // "open" and "ready" for compatibility with net.Socket
 const emitOpenAndReady = ({ duplex }: { duplex: nodeStream.Duplex }) => {
   for (const event of ["open", "ready"]) {
@@ -92,27 +101,6 @@ const createRawPacketSocketApi = ({
   const interfaceNames = createInterfaceNames({ po6, kernelAbi, controlSocketRunner });
   const ethtool = createEthtool({ po6, kernelAbi, memory: kernel.memory });
 
-  const bindToInterface = ({ socket, ifindex }: { socket: TSocket, ifindex: number }) => {
-    const sockaddr = kernelAbi.sockaddr_ll.format({
-      value: {
-        sll_family: constants.AF_PACKET,
-        sll_protocol: constants.ETH_P_ALL,
-        sll_ifindex: BigInt(ifindex),
-        sll_hatype: 0n,
-        sll_pkttype: 0n,
-        sll_halen: 0n,
-        sll_addr: new Uint8Array(8),
-      }
-    });
-
-    const { errno } = socket.bind({ sockaddr });
-    if (errno !== undefined) {
-      return { error: po6.createErrorFromErrno({ operation: "bind()", errno }) };
-    }
-
-    return { error: undefined };
-  };
-
   const disableOffloadsUsing = ({ fd, ifindex, offloads }: { fd: number, ifindex: number, offloads: TOffloadName[] }) => {
     const { error, interfaceName } = interfaceNames.findInterfaceNameByIndexUsing({ fd, ifindex });
     if (error !== undefined) {
@@ -140,38 +128,7 @@ const createRawPacketSocketApi = ({
     return error === undefined ? result : { error };
   };
 
-  const enablePromiscuousMode = ({ socket, ifindex }: { socket: TSocket, ifindex: number }) => {
-    const { errno } = socket.sockopt.packet.addMembership({
-      ifindex,
-      action: kernelAbi.po6.constants.PACKET_MR_PROMISC
-    });
-
-    if (errno !== undefined) {
-      return { error: po6.createErrorFromErrno({ operation: "setsockopt(PACKET_ADD_MEMBERSHIP)", errno }) };
-    }
-
-    return { error: undefined };
-  };
-
-  const setup = ({ socket, args }: { socket: TSocket, args: TCreateNodeDuplexByInterfaceIndexArgs }) => {
-    const { ifindex } = args;
-
-    const { error: bindError } = bindToInterface({ socket, ifindex });
-    if (bindError !== undefined) {
-      return { error: bindError };
-    }
-
-    const { error: offloadsError } = disableOffloads({ ifindex, offloads: offloadsToDisableFor(args) });
-    if (offloadsError !== undefined) {
-      return { error: offloadsError };
-    }
-
-    if (args.enablePromiscuousMode !== true) {
-      return { error: undefined };
-    }
-
-    return enablePromiscuousMode({ socket, ifindex });
-  };
+  const socketSetup = createSocketSetup({ po6, kernelAbi, disableOffloads });
 
   const openSocket = ({ args }: { args: TCreateNodeDuplexByInterfaceIndexArgs }): TOpenSocketResult => {
     // protocol 0 receives nothing until bind() selects the interface and ETH_P_ALL
@@ -185,7 +142,7 @@ const createRawPacketSocketApi = ({
       return { error: socketError, socket: undefined };
     }
 
-    const { error: setupError } = setup({ socket, args });
+    const { error: setupError } = socketSetup.setup({ socket, options: socketSetupOptionsFor(args) });
     if (setupError !== undefined) {
       socket.close();
       return { error: setupError, socket: undefined };
