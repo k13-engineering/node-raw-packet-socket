@@ -169,6 +169,31 @@ describe("socket", () => {
     });
   });
 
+  describe("int options", () => {
+    it("should set int options of packet sockets", () => {
+      const socket = createPacketSocket();
+
+      const { errno } = socket.sockopt.packet.setInt({ optname: constants.PACKET_IGNORE_OUTGOING, value: 1 });
+      assert.strictEqual(errno, undefined);
+      assert.deepStrictEqual(socket.bind({ sockaddr: sockaddrFor({ ifindex: eth0 }) }), { errno: undefined });
+
+      fakeKernel.sendFrameOfHost({ ifindex: eth0, frame: createFrame({ payload: "outgoing" }) });
+      assert.strictEqual(socket.recvmsg({ data: new Uint8Array(100) }).errno, errnoCodes.EAGAIN);
+
+      socket.close();
+    });
+
+    it("should report errors of setsockopt()", () => {
+      const socket = createPacketSocket();
+
+      const { errno } = socket.sockopt.packet.setInt({ optname: 0x7fffn, value: 1 });
+
+      assert.strictEqual(errno, errnoCodes.ENOPROTOOPT);
+
+      socket.close();
+    });
+  });
+
   describe("poller", () => {
     it("should call back once the socket is readable", async () => {
       const socket = createBoundPacketSocket();

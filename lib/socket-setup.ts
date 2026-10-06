@@ -8,6 +8,7 @@ type TSocketSetupOptions = {
   ifindex: number;
   offloads: TOffloadName[];
   enablePromiscuousMode: boolean;
+  ignoreOutgoingFrames: boolean;
 };
 
 type TSetupResult = {
@@ -64,7 +65,21 @@ const createSocketSetup = ({
     return { error: undefined };
   };
 
+  const ignoreOutgoingFrames = ({ socket }: { socket: TSocket }) => {
+    const { errno } = socket.sockopt.packet.setInt({ optname: constants.PACKET_IGNORE_OUTGOING, value: 1 });
+
+    if (errno !== undefined) {
+      return { error: po6.createErrorFromErrno({ operation: "setsockopt(PACKET_IGNORE_OUTGOING)", errno }) };
+    }
+
+    return { error: undefined };
+  };
+
+  // the socket receives frames from bind() on, so the options that select them come first
   const setupSteps: TSetupStep[] = [
+    ({ socket, options }) => {
+      return options.ignoreOutgoingFrames ? ignoreOutgoingFrames({ socket }) : { error: undefined };
+    },
     ({ socket, options }) => {
       return bindToInterface({ socket, ifindex: options.ifindex });
     },

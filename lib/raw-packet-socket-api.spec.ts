@@ -174,6 +174,35 @@ describe("raw packet socket API", () => {
       assert.strictEqual(fakeKernel.interfaceState({ name: "eth0" }).promiscuity, 0);
     });
 
+    it("should receive the frames the host sends on the interface as well by default", async () => {
+      const duplex = await open({ ifindex: eth0 });
+
+      const outgoing = createFrame({ payload: "outgoing" });
+      const received = new Promise<Uint8Array>((resolve) => {
+        duplex.once("data", resolve);
+      });
+      fakeKernel.sendFrameOfHost({ ifindex: eth0, frame: outgoing });
+      assert.deepStrictEqual(new Uint8Array(await received), outgoing);
+
+      await destroy({ duplex });
+    });
+
+    it("should ignore the frames the host sends if asked to, from before it binds the socket", async () => {
+      const duplex = await open({ ifindex: eth0, ignoreOutgoingFrames: true });
+
+      assert.deepStrictEqual(operations().slice(0, 3), ["socket:AF_PACKET", "setsockopt", "bind"]);
+
+      const incoming = createFrame({ payload: "incoming" });
+      const received = new Promise<Uint8Array>((resolve) => {
+        duplex.once("data", resolve);
+      });
+      fakeKernel.sendFrameOfHost({ ifindex: eth0, frame: createFrame({ payload: "outgoing" }) });
+      fakeKernel.receiveFrame({ ifindex: eth0, frame: incoming });
+      assert.deepStrictEqual(new Uint8Array(await received), incoming);
+
+      await destroy({ duplex });
+    });
+
     it("should not open a socket if destroyed right away", async () => {
       const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
 
@@ -239,6 +268,14 @@ describe("raw packet socket API", () => {
         const error = await openFailure({ ifindex: eth0, disableGenericReceiveOffloadUntilReboot: true });
 
         assert.strictEqual(error.message, "ioctl(SIOCETHTOOL, ETHTOOL_SFEATURES) failed with EPERM: Operation not permitted");
+      });
+
+      it("should fail if outgoing frames cannot be ignored, e.g. before Linux 4.20", async () => {
+        fakeKernel.injectErrno({ operation: "setsockopt", errno: errnoCodes.ENOPROTOOPT });
+
+        const error = await openFailure({ ifindex: eth0, ignoreOutgoingFrames: true });
+
+        assert.strictEqual(error.message, "setsockopt(PACKET_IGNORE_OUTGOING) failed with ENOPROTOOPT: Protocol not available");
       });
 
       it("should fail if the promiscuous mode cannot be enabled", async () => {

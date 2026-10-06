@@ -45,6 +45,7 @@ describeIfNamespaces("end to end", () => {
 
     assert.strictEqual(result.received, "hello over veth");
     assert.strictEqual(result.receivedLength, 60);
+    assert.strictEqual(result.watched, "reply over veth");
     assert.strictEqual(result.promiscuity, 1);
     assert.strictEqual(result.promiscuityAfterClose, 0);
 

@@ -20,6 +20,7 @@ type TCreateNodeDuplexByInterfaceIndexArgs = {
   disableUdpSegmentationOffloadUntilReboot?: boolean;
   disableTransmitChecksumOffloadUntilReboot?: boolean;
   enablePromiscuousMode?: boolean;
+  ignoreOutgoingFrames?: boolean;
 };
 
 type TDisableOffloadsUntilRebootArgs = {
@@ -67,6 +68,7 @@ const socketSetupOptionsFor = (args: TCreateNodeDuplexByInterfaceIndexArgs): TSo
     ifindex: args.ifindex,
     offloads: offloadsToDisableFor(args),
     enablePromiscuousMode: args.enablePromiscuousMode === true,
+    ignoreOutgoingFrames: args.ignoreOutgoingFrames === true,
   };
 };
 

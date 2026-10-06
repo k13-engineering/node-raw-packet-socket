@@ -50,6 +50,7 @@ type TSocket = {
   sockopt: {
     packet: {
       addMembership: (args: { ifindex: number, action: bigint, address?: Uint8Array }) => TSetsockoptResult;
+      setInt: (args: { optname: bigint, value: number }) => TSetsockoptResult;
     };
   };
   close: () => void;
@@ -104,8 +105,18 @@ const createSocketFactory = ({
       });
     };
 
+    const setInt: TSocket["sockopt"]["packet"]["setInt"] = ({ optname, value }) => {
+      return po6.setsockopt({
+        fd,
+        level: kernelAbi.po6.constants.SOL_PACKET,
+        optname,
+        optval: kernelAbi.sockopt_int.format({ value: { value: BigInt(value) } })
+      });
+    };
+
     return {
-      addMembership
+      addMembership,
+      setInt
     };
   };
 

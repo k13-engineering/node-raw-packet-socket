@@ -68,6 +68,18 @@ const sockaddr_ll = define({
   }
 });
 
+// the int most socket options take
+const sockopt_int = define({
+  definition: {
+    type: "struct",
+    packed: false,
+    fixedAbi: {},
+    fields: [
+      { name: "value", definition: int },
+    ]
+  }
+});
+
 // struct packet_mreq from <linux/if_packet.h>
 const packet_mreq = define({
   definition: {
@@ -276,6 +288,8 @@ const constants = {
 
   ETH_P_ALL: 0x0003n,
 
+  PACKET_IGNORE_OUTGOING: 23n,
+
   SIOCGIFNAME: 0x8910n,
   SIOCGIFINDEX: 0x8933n,
   SIOCETHTOOL: 0x8946n,
@@ -300,6 +314,7 @@ const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
     po6: po6.createKernelAbiFor({ machineAbi }),
 
     sockaddr_ll: sockaddr_ll.parser({ abi: machineAbi }),
+    sockopt_int: sockopt_int.parser({ abi: machineAbi }),
     packet_mreq: packet_mreq.parser({ abi: machineAbi }),
     ifmap: ifmap.parser({ abi: machineAbi }),
     ifreq: defineIfreq({ machineAbi }).parser({ abi: machineAbi }),
@@ -329,6 +344,7 @@ export {
   constants,
   defineIfreq,
   sockaddr_ll,
+  sockopt_int,
   packet_mreq,
   ifmap,
   ifru_ifindex,

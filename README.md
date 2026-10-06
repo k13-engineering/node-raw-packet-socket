@@ -70,6 +70,9 @@ The options are:
 | `disableUdpSegmentationOffloadUntilReboot` | like `ethtool -K <interface> tx-udp-segmentation off` |
 | `disableTransmitChecksumOffloadUntilReboot` | like `ethtool -K <interface> tx off` |
 | `enablePromiscuousMode` | `PACKET_MR_PROMISC` membership for as long as the socket is open |
+| `ignoreOutgoingFrames` | `PACKET_IGNORE_OUTGOING`, only receive the frames arriving on the interface, Linux 4.20 or newer |
+
+Besides the frames arriving on the interface, the stream receives the frames the host sends on it, except the ones written to the stream itself. `ignoreOutgoingFrames` leaves them out.
 
 The receive offloads merge frames before the socket sees them. The transmit offloads leave the outgoing frames of the host unfinished where the socket sees them: oversized with segmentation offloads, with unfinished checksums with checksum offload. Turning off checksum offload makes the kernel turn off TCP and UDP segmentation offload as well.
 

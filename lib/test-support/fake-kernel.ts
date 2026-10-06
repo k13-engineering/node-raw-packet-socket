@@ -46,6 +46,7 @@ type TFakeFile = {
   protocol: bigint;
   boundIfindex: number | undefined;
   promiscuousIfindexes: number[];
+  ignoresOutgoing: boolean;
   receiveQueue: Uint8Array[];
   pollErrorCode: number | undefined;
   poller: TFakePoller | undefined;
@@ -338,6 +339,7 @@ const createFakeKernel = ({
       protocol,
       boundIfindex: undefined,
       promiscuousIfindexes: [],
+      ignoresOutgoing: false,
       receiveQueue: [],
       pollErrorCode: undefined,
       poller: undefined,
@@ -422,7 +424,21 @@ const createFakeKernel = ({
       return fail({ errno });
     }
 
-    if (level !== kernelAbi.po6.constants.SOL_PACKET || optname !== kernelAbi.po6.constants.PACKET_ADD_MEMBERSHIP) {
+    if (level !== kernelAbi.po6.constants.SOL_PACKET) {
+      return fail({ errno: errnoCodes.ENOPROTOOPT });
+    }
+
+    if (optname === constants.PACKET_IGNORE_OUTGOING) {
+      // like packet_setsockopt(), which refuses less than an int
+      if (optval.length < kernelAbi.sockopt_int.size) {
+        return fail({ errno: errnoCodes.EINVAL });
+      }
+
+      file.ignoresOutgoing = kernelAbi.sockopt_int.parse({ data: optval }).value !== 0n;
+      return ok();
+    }
+
+    if (optname !== kernelAbi.po6.constants.PACKET_ADD_MEMBERSHIP) {
       return fail({ errno: errnoCodes.ENOPROTOOPT });
     }
 
@@ -889,6 +905,16 @@ const createFakeKernel = ({
     schedulePollerCheck();
   };
 
+  // the host sends a frame on the interface, which its packet sockets see as outgoing
+  const sendFrameOfHost = ({ ifindex, frame }: { ifindex: number, frame: Uint8Array }) => {
+    packetSocketsOn({ ifindex }).filter((file) => {
+      return !file.ignoresOutgoing;
+    }).forEach((file) => {
+      file.receiveQueue = [...file.receiveQueue, frame];
+    });
+    schedulePollerCheck();
+  };
+
   // the error that polling the packet sockets of the interface reports next
   const failPolling = ({ ifindex, errorCode }: { ifindex: number, errorCode: number }) => {
     packetSocketsOn({ ifindex }).forEach((file) => {
@@ -933,6 +959,7 @@ const createFakeKernel = ({
 
     injectErrno,
     receiveFrame,
+    sendFrameOfHost,
     failPolling,
     setSendCapacity,
     setShortWrites,

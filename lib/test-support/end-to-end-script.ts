@@ -80,26 +80,40 @@ if (disableError !== undefined) {
 
 const sender = createNodeDuplexByInterfaceIndex({ ifindex: ifindexOf({ interfaceName: "veth1" }) });
 
-await Promise.all([ready({ duplex: receiver }), ready({ duplex: sender })]);
+// sees the frame of the sender as outgoing and the reply of the receiver as incoming
+const watcher = createNodeDuplexByInterfaceIndex({ ifindex: ifindexOf({ interfaceName: "veth1" }), ignoreOutgoingFrames: true });
 
-const frame = createFrame({ payload: "hello over veth" });
+await Promise.all([ready({ duplex: receiver }), ready({ duplex: sender }), ready({ duplex: watcher })]);
 
-const received = new Promise<Uint8Array>((resolve) => {
-  receiver.on("data", (packet: Uint8Array) => {
-    // ignore e.g. IPv6 router solicitations
-    if (packet[12] === 0x88 && packet[13] === 0xb5) {
-      resolve(packet);
-    }
+// the next frame with the experimental ethertype, ignoring e.g. IPv6 router solicitations
+const nextExperimentalFrame = ({ duplex }: { duplex: nodeStream.Duplex }) => {
+  return new Promise<Uint8Array>((resolve) => {
+    duplex.on("data", (packet: Uint8Array) => {
+      if (packet[12] === 0x88 && packet[13] === 0xb5) {
+        resolve(packet);
+      }
+    });
   });
-});
+};
 
-sender.write(frame);
+const payloadOf = ({ packet }: { packet: Uint8Array }) => {
+  return new TextDecoder().decode(packet.subarray(14, 29));
+};
+
+const received = nextExperimentalFrame({ duplex: receiver });
+const watched = nextExperimentalFrame({ duplex: watcher });
+
+sender.write(createFrame({ payload: "hello over veth" }));
 
 const packet = await received;
 
+// the frame of the sender is queued on the watcher by now, unless it is ignored
+receiver.write(createFrame({ payload: "reply over veth" }));
+
 const result = {
-  received: new TextDecoder().decode(packet.subarray(14, 29)),
+  received: payloadOf({ packet }),
   receivedLength: packet.length,
+  watched: payloadOf({ packet: await watched }),
   promiscuity: promiscuityOf({ interfaceName: "veth0" }),
   offloads: offloadsOf({ interfaceName: "veth0" }),
   offloadsWithoutSocket: offloadsOf({ interfaceName: "veth1" })?.filter((line) => {
@@ -107,7 +121,7 @@ const result = {
   }),
 };
 
-const closed = [receiver, sender].map((duplex) => {
+const closed = [receiver, sender, watcher].map((duplex) => {
   return new Promise((resolve) => {
     duplex.once("close", resolve);
     duplex.destroy();
