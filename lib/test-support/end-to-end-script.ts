@@ -23,12 +23,23 @@ const ready = ({ duplex }: { duplex: nodeStream.Duplex }) => {
   });
 };
 
+// the lines of `ethtool -k` of the offloads the receiver disables, with their features
+const offloadLine = new RegExp(`^(${[
+  "tx-checksumming", "\\ttx-checksum-.*",
+  "tcp-segmentation-offload", "\\ttx-tcp.*-segmentation",
+  "tx-udp-segmentation",
+  "generic-segmentation-offload",
+  "generic-receive-offload",
+  "rx-gro-hw",
+  "large-receive-offload",
+].join("|")}):`);
+
 // ethtool is not needed by the library, but checks its work independently where available
 const offloadsOf = ({ interfaceName }: { interfaceName: string }) => {
   try {
     const output = nodeChildProcess.execFileSync("ethtool", ["-k", interfaceName], { encoding: "utf8" });
     return output.split("\n").filter((line) => {
-      return /^(tcp-segmentation-offload|generic-segmentation-offload|generic-receive-offload|\ttx-tcp.*-segmentation):/.test(line);
+      return offloadLine.test(line);
     }).map((line) => {
       return line.trim();
     });
@@ -47,6 +58,10 @@ const receiver = createNodeDuplexByInterfaceIndex({
   disableTcpSegmentationOffloadUntilReboot: true,
   disableGenericSegmentationOffloadUntilReboot: true,
   disableGenericReceiveOffloadUntilReboot: true,
+  disableHardwareGenericReceiveOffloadUntilReboot: true,
+  disableLargeReceiveOffloadUntilReboot: true,
+  disableUdpSegmentationOffloadUntilReboot: true,
+  disableTransmitChecksumOffloadUntilReboot: true,
   enablePromiscuousMode: true,
 });
 

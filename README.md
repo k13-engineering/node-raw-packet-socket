@@ -64,7 +64,13 @@ The options are:
 | `disableTcpSegmentationOffloadUntilReboot` | like `ethtool -K <interface> tso off` |
 | `disableGenericSegmentationOffloadUntilReboot` | like `ethtool -K <interface> gso off` |
 | `disableGenericReceiveOffloadUntilReboot` | like `ethtool -K <interface> gro off` |
+| `disableHardwareGenericReceiveOffloadUntilReboot` | like `ethtool -K <interface> rx-gro-hw off` |
+| `disableLargeReceiveOffloadUntilReboot` | like `ethtool -K <interface> lro off` |
+| `disableUdpSegmentationOffloadUntilReboot` | like `ethtool -K <interface> tx-udp-segmentation off` |
+| `disableTransmitChecksumOffloadUntilReboot` | like `ethtool -K <interface> tx off` |
 | `enablePromiscuousMode` | `PACKET_MR_PROMISC` membership for as long as the socket is open |
+
+The receive offloads merge frames before the socket sees them. The transmit offloads leave the outgoing frames of the host unfinished where the socket sees them: oversized with segmentation offloads, with unfinished checksums with checksum offload. Turning off checksum offload makes the kernel turn off TCP and UDP segmentation offload as well.
 
 The offloads stay disabled until the interface goes away, e.g. on reboot. Like `ethtool`, the ioctls address the interface by name, so renaming it while the socket is set up affects the wrong interface or fails.
 
@@ -74,7 +80,7 @@ The stream reports the interface going down as `Error("interface went down")`.
 
 The library performs the syscalls with [po6](https://www.npmjs.com/package/po6) and [syscall-napi](https://www.npmjs.com/package/syscall-napi), pins buffers handed to the kernel with [buffer2address](https://www.npmjs.com/package/buffer2address), and waits for the socket in the event loop with [@k13engineering/uv-poll](https://www.npmjs.com/package/@k13engineering/uv-poll). The kernel structures are described with [ya-struct](https://www.npmjs.com/package/ya-struct) and compared with the C headers in the tests.
 
-Disabling an offload works like `do_sfeatures()` in ethtool without netlink. It reads the feature names and their state, turns off the features matching the offload (`tx-tcp*-segmentation`, `tx-generic-segmentation` or `rx-gro`) that the device allows changing, and only fails if nothing changed while the offload is still on.
+Disabling an offload works like `do_sfeatures()` in ethtool without netlink. It reads the feature names and their state, turns off the features matching the offload (e.g. `tx-checksum-*` or `tx-tcp*-segmentation`) that the device allows changing, and only fails if nothing changed while the offload is still on. Whether it is on comes from its legacy flag, e.g. `ETHTOOL_GTSO`, or from its features for `rx-gro-hw` and `tx-udp-segmentation`, which have none.
 
 ## Development
 

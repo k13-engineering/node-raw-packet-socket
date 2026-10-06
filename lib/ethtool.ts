@@ -2,7 +2,25 @@ import type { TMemoryInterface, TPo6Api } from "po6";
 import { formatIfreq } from "./control-socket.ts";
 import type { TRawPacketKernelAbi } from "./kernel-abi.ts";
 
-type TOffloadName = "tcp-segmentation-offload" | "generic-segmentation-offload" | "generic-receive-offload";
+type TOffloadName =
+  "tx-checksumming" |
+  "tcp-segmentation-offload" |
+  "tx-udp-segmentation" |
+  "generic-segmentation-offload" |
+  "generic-receive-offload" |
+  "rx-gro-hw" |
+  "large-receive-offload";
+
+type TLegacyFlag = {
+  command: "ETHTOOL_GTXCSUM" | "ETHTOOL_GTSO" | "ETHTOOL_GGSO" | "ETHTOOL_GGRO" | "ETHTOOL_GFLAGS";
+  // the bit of the offload, for commands that answer a bitmap instead of 0 or 1
+  bit: "ETH_FLAG_LRO" | undefined;
+};
+
+type TOffloadDefinition = {
+  featurePattern: string;
+  legacyFlag: TLegacyFlag | undefined;
+};
 
 // bit i stands for feature i of the string set ETH_SS_FEATURES
 type TFeatureState = {
@@ -12,8 +30,8 @@ type TFeatureState = {
   active: bigint;
   // NETIF_F_NEVER_CHANGE
   neverChanged: bigint;
-  // the legacy flag of the offload, e.g. from ETHTOOL_GTSO
-  offloadFlag: boolean;
+  // the legacy flag of the offload, e.g. from ETHTOOL_GTSO, if it has one
+  offloadFlag: boolean | undefined;
 };
 
 type TReadFeatureNamesResult = {
@@ -43,13 +61,19 @@ type TInspectResult = {
 };
 
 // the offloads of `ethtool -K` with the pattern of the kernel feature names
-// they stand for and their legacy query command, from off_flag_def in
-// ethtool's common.c
-const offloadDefinitions = {
-  "tcp-segmentation-offload": { featurePattern: "tx-tcp*-segmentation", flagCommand: "ETHTOOL_GTSO" },
-  "generic-segmentation-offload": { featurePattern: "tx-generic-segmentation", flagCommand: "ETHTOOL_GGSO" },
-  "generic-receive-offload": { featurePattern: "rx-gro", flagCommand: "ETHTOOL_GGRO" },
-} as const;
+// they stand for and their legacy flag, from off_flag_def in ethtool's
+// common.c; ethtool reads the flag of LRO from the bitmap of ETHTOOL_GFLAGS.
+// rx-gro-hw and tx-udp-segmentation are kernel feature names without a
+// legacy flag, which ethtool -K takes as they are.
+const offloadDefinitions: { [offload in TOffloadName]: TOffloadDefinition } = {
+  "tx-checksumming": { featurePattern: "tx-checksum-*", legacyFlag: { command: "ETHTOOL_GTXCSUM", bit: undefined } },
+  "tcp-segmentation-offload": { featurePattern: "tx-tcp*-segmentation", legacyFlag: { command: "ETHTOOL_GTSO", bit: undefined } },
+  "tx-udp-segmentation": { featurePattern: "tx-udp-segmentation", legacyFlag: undefined },
+  "generic-segmentation-offload": { featurePattern: "tx-generic-segmentation", legacyFlag: { command: "ETHTOOL_GGSO", bit: undefined } },
+  "generic-receive-offload": { featurePattern: "rx-gro", legacyFlag: { command: "ETHTOOL_GGRO", bit: undefined } },
+  "rx-gro-hw": { featurePattern: "rx-gro-hw", legacyFlag: undefined },
+  "large-receive-offload": { featurePattern: "rx-lro", legacyFlag: { command: "ETHTOOL_GFLAGS", bit: "ETH_FLAG_LRO" } },
+};
 
 const bitsPerBlock = 32;
 
@@ -109,8 +133,23 @@ const changedBetween = ({ oldState, newState }: { oldState: TFeatureState, newSt
   return newState.offloadFlag !== oldState.offloadFlag || newState.active !== oldState.active;
 };
 
-const turnedOff = ({ oldState, newState, valid }: { oldState: TFeatureState, newState: TFeatureState, valid: bigint }) => {
-  return !newState.offloadFlag && newState.active === (oldState.active & ~valid);
+// an offload without a legacy flag is on as long as one of its features is
+const offloadOn = ({ state, matching }: { state: TFeatureState, matching: bigint }) => {
+  return state.offloadFlag ?? (state.active & matching) !== 0n;
+};
+
+const turnedOff = ({
+  oldState,
+  newState,
+  matching,
+  valid
+}: {
+  oldState: TFeatureState,
+  newState: TFeatureState,
+  matching: bigint,
+  valid: bigint
+}) => {
+  return !offloadOn({ state: newState, matching }) && newState.active === (oldState.active & ~valid);
 };
 
 // like ethtool, only fail if the features are not as requested and nothing changed at all
@@ -119,15 +158,17 @@ const checkOutcome = ({
   offload,
   oldState,
   newState,
+  matching,
   valid
 }: {
   interfaceName: string,
   offload: TOffloadName,
   oldState: TFeatureState,
   newState: TFeatureState,
+  matching: bigint,
   valid: bigint
 }) => {
-  if (turnedOff({ oldState, newState, valid }) || changedBetween({ oldState, newState })) {
+  if (turnedOff({ oldState, newState, matching, valid }) || changedBetween({ oldState, newState })) {
     return { error: undefined };
   }
 
@@ -139,7 +180,7 @@ const checkOutcome = ({
 //
 // - read the names of the kernel features (ETHTOOL_GSSET_INFO, ETHTOOL_GSTRINGS)
 // - read the state of the features (ETHTOOL_GFEATURES) and the legacy flag
-//   of the offload (e.g. ETHTOOL_GTSO)
+//   of the offload, if it has one (e.g. ETHTOOL_GTSO)
 // - turn off the features that match the name pattern of the offload and that
 //   the device allows changing (ETHTOOL_SFEATURES)
 // - read the state again; only fail if it is not as requested and nothing
@@ -255,16 +296,23 @@ const createEthtool = ({
   };
 
   const readOffloadFlag = ({ fd, interfaceName, offload }: { fd: number, interfaceName: string, offload: TOffloadName }) => {
-    const { flagCommand } = offloadDefinitions[offload];
+    const { legacyFlag } = offloadDefinitions[offload];
+    if (legacyFlag === undefined) {
+      return { error: undefined, offloadFlag: undefined };
+    }
 
-    const request = kernelAbi.ethtool_value.format({ value: { cmd: constants[flagCommand], data: 0n } });
+    const { command, bit } = legacyFlag;
+    const request = kernelAbi.ethtool_value.format({ value: { cmd: constants[command], data: 0n } });
 
-    const { error } = ethtoolIoctl({ fd, interfaceName, commandName: flagCommand, request });
+    const { error } = ethtoolIoctl({ fd, interfaceName, commandName: command, request });
     if (error !== undefined) {
       return { error, offloadFlag: undefined };
     }
 
-    return { error: undefined, offloadFlag: kernelAbi.ethtool_value.parse({ data: request }).data !== 0n };
+    const { data } = kernelAbi.ethtool_value.parse({ data: request });
+    const flag = bit === undefined ? data : data & constants[bit];
+
+    return { error: undefined, offloadFlag: flag !== 0n };
   };
 
   const readFeatureState = ({
@@ -369,6 +417,7 @@ const createEthtool = ({
     offload,
     blockCount,
     oldState,
+    matching,
     valid
   }: {
     fd: number,
@@ -376,6 +425,7 @@ const createEthtool = ({
     offload: TOffloadName,
     blockCount: number,
     oldState: TFeatureState,
+    matching: bigint,
     valid: bigint
   }) => {
     const { error: writeError } = writeFeatures({ fd, interfaceName, valid, blockCount });
@@ -388,7 +438,7 @@ const createEthtool = ({
       return { error: stateError };
     }
 
-    return checkOutcome({ interfaceName, offload, oldState, newState, valid });
+    return checkOutcome({ interfaceName, offload, oldState, newState, matching, valid });
   };
 
   const disableOffload = ({ fd, interfaceName, offload }: { fd: number, interfaceName: string, offload: TOffloadName }) => {
@@ -400,7 +450,15 @@ const createEthtool = ({
     const matching = featureBitsMatching({ featureNames, pattern: offloadDefinitions[offload].featurePattern });
     const valid = matching & state.available & ~state.neverChanged;
 
-    return changeAndCompare({ fd, interfaceName, offload, blockCount: blockCountFor({ featureNames }), oldState: state, valid });
+    return changeAndCompare({
+      fd,
+      interfaceName,
+      offload,
+      blockCount: blockCountFor({ featureNames }),
+      oldState: state,
+      matching,
+      valid
+    });
   };
 
   const disableOffloads = ({

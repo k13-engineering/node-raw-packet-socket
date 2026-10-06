@@ -91,17 +91,28 @@ const defaultFeatureNames = [
 ];
 
 const offloadFeatureNames = [
-  "tx-generic-segmentation", "rx-gro",
+  "tx-checksum-ip-generic", "tx-checksum-sctp",
+  "tx-generic-segmentation", "rx-gro", "rx-gro-hw", "rx-lro",
   "tx-tcp-segmentation", "tx-tcp-ecn-segmentation", "tx-tcp-mangleid-segmentation", "tx-tcp6-segmentation",
-  "tx-tcp-accecn-segmentation",
+  "tx-tcp-accecn-segmentation", "tx-udp-segmentation",
 ];
 
 // the features the legacy flags stand for in the kernel, e.g. NETIF_F_ALL_TSO for ETHTOOL_GTSO
 const legacyFlagFeatureNames: { [command: string]: string[] } = {
+  ETHTOOL_GTXCSUM: ["tx-checksum-ipv4", "tx-checksum-ip-generic", "tx-checksum-ipv6", "tx-checksum-fcoe-crc", "tx-checksum-sctp"],
   ETHTOOL_GTSO: ["tx-tcp-segmentation", "tx-tcp-ecn-segmentation", "tx-tcp-mangleid-segmentation", "tx-tcp6-segmentation"],
   ETHTOOL_GGSO: ["tx-generic-segmentation"],
   ETHTOOL_GGRO: ["rx-gro"],
 };
+
+// the bits of ETHTOOL_GFLAGS and the features they stand for, like __ethtool_get_flags() in the kernel
+const legacyFlagBits = [
+  { bit: 1n << 7n, name: "tx-vlan-hw-insert" },
+  { bit: 1n << 8n, name: "rx-vlan-hw-parse" },
+  { bit: 1n << 15n, name: "rx-lro" },
+  { bit: 1n << 27n, name: "rx-ntuple-filter" },
+  { bit: 1n << 28n, name: "rx-hashing" },
+];
 
 // the offload features are on and may be changed, everything else is off
 const createDefaultFeatures = (): TFakeFeature[] => {
@@ -712,6 +723,19 @@ const createFakeKernel = ({
     return ok();
   };
 
+  const ethtoolGflags = ({ iface, data }: { iface: TFakeInterface, data: Uint8Array }) => {
+    const flags = legacyFlagBits.reduce((bits, { bit, name }) => {
+      const on = iface.features.some((feature) => {
+        return feature.active && feature.name === name;
+      });
+      return on ? bits | bit : bits;
+    }, 0n);
+
+    data.set(kernelAbi.ethtool_value.format({ value: { cmd: constants.ETHTOOL_GFLAGS, data: flags } }));
+
+    return ok();
+  };
+
   const siocethtool = ({ ifr }: { ifr: Uint8Array }) => {
     const { ifr_name, ifr_ifru } = ifruOf({ ifr });
     const { ifr_data } = kernelAbi.ifru_data.parse({ data: ifr_ifru });
@@ -749,6 +773,9 @@ const createFakeKernel = ({
       ETHTOOL_SFEATURES: () => {
         return ethtoolSfeatures({ iface, data });
       },
+      ETHTOOL_GTXCSUM: () => {
+        return ethtoolLegacyFlag({ iface, data, commandName });
+      },
       ETHTOOL_GTSO: () => {
         return ethtoolLegacyFlag({ iface, data, commandName });
       },
@@ -757,6 +784,9 @@ const createFakeKernel = ({
       },
       ETHTOOL_GGRO: () => {
         return ethtoolLegacyFlag({ iface, data, commandName });
+      },
+      ETHTOOL_GFLAGS: () => {
+        return ethtoolGflags({ iface, data });
       },
     };
 

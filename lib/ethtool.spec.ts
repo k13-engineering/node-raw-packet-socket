@@ -30,6 +30,15 @@ const featuresWith = ({ changes }: { changes: { [name: string]: Partial<TFakeFea
   });
 };
 
+// the names of the features that are on by default, without the given ones
+const defaultActiveFeaturesWithout = ({ names }: { names: string[] }) => {
+  return createDefaultFeatures().filter((feature) => {
+    return feature.active && !names.includes(feature.name);
+  }).map((feature) => {
+    return feature.name;
+  });
+};
+
 const tsoFeaturesWith = ({ change }: { change: Partial<TFakeFeature> }) => {
   return featuresWith({
     changes: Object.fromEntries(tsoFeatureNames.map((name) => {
@@ -92,7 +101,7 @@ describe("ethtool", () => {
       assert.deepStrictEqual(disableOffloads({ offloads: ["tcp-segmentation-offload"] }), { error: undefined });
 
       // tx-tcp-accecn-segmentation is the 34th feature, in the second block
-      assert.deepStrictEqual(activeFeatures(), ["tx-generic-segmentation", "rx-gro"]);
+      assert.deepStrictEqual(activeFeatures(), defaultActiveFeaturesWithout({ names: tsoFeatureNames }));
       assert.deepStrictEqual(ethtoolCommands(), [
         "ETHTOOL_GSSET_INFO",
         "ETHTOOL_GSTRINGS",
@@ -109,13 +118,69 @@ describe("ethtool", () => {
 
       assert.deepStrictEqual(disableOffloads({ offloads: ["generic-segmentation-offload"] }), { error: undefined });
 
-      const expected = createDefaultFeatures().filter((feature) => {
-        return feature.active && feature.name !== "tx-generic-segmentation";
-      }).map((feature) => {
-        return feature.name;
+      assert.deepStrictEqual(activeFeatures(), defaultActiveFeaturesWithout({ names: ["tx-generic-segmentation"] }));
+    });
+
+    it("should turn off all transmit checksum features, as ethtool -K tx off does", () => {
+      const { disableOffloads, activeFeatures, ethtoolCommands } = setup({
+        features: featuresWith({ changes: { "tx-checksum-ipv6": { active: true, changeable: true } } })
       });
 
-      assert.deepStrictEqual(activeFeatures(), expected);
+      assert.deepStrictEqual(disableOffloads({ offloads: ["tx-checksumming"] }), { error: undefined });
+
+      assert.deepStrictEqual(activeFeatures(), defaultActiveFeaturesWithout({
+        names: ["tx-checksum-ip-generic", "tx-checksum-sctp"]
+      }));
+      assert.deepStrictEqual(ethtoolCommands(), [
+        "ETHTOOL_GSSET_INFO",
+        "ETHTOOL_GSTRINGS",
+        "ETHTOOL_GTXCSUM",
+        "ETHTOOL_GFEATURES",
+        "ETHTOOL_SFEATURES",
+        "ETHTOOL_GTXCSUM",
+        "ETHTOOL_GFEATURES",
+      ]);
+    });
+
+    it("should turn off large receive offload, with its flag from the bitmap of ETHTOOL_GFLAGS", () => {
+      // sets another bit of ETHTOOL_GFLAGS, which stays on
+      const { disableOffloads, activeFeatures, ethtoolCommands } = setup({
+        features: featuresWith({ changes: { "rx-vlan-hw-parse": { active: true, changeable: false } } })
+      });
+
+      assert.deepStrictEqual(disableOffloads({ offloads: ["large-receive-offload"] }), { error: undefined });
+
+      assert.ok(!activeFeatures().includes("rx-lro"));
+      assert.ok(activeFeatures().includes("rx-vlan-hw-parse"));
+      assert.deepStrictEqual(ethtoolCommands(), [
+        "ETHTOOL_GSSET_INFO",
+        "ETHTOOL_GSTRINGS",
+        "ETHTOOL_GFLAGS",
+        "ETHTOOL_GFEATURES",
+        "ETHTOOL_SFEATURES",
+        "ETHTOOL_GFLAGS",
+        "ETHTOOL_GFEATURES",
+      ]);
+    });
+
+    it("should turn off hardware GRO and UDP segmentation, which have no legacy flag", () => {
+      const { disableOffloads, activeFeatures, ethtoolCommands } = setup();
+
+      assert.deepStrictEqual(disableOffloads({ offloads: ["rx-gro-hw", "tx-udp-segmentation"] }), { error: undefined });
+
+      assert.deepStrictEqual(activeFeatures(), defaultActiveFeaturesWithout({ names: ["rx-gro-hw", "tx-udp-segmentation"] }));
+      assert.deepStrictEqual(ethtoolCommands(), [
+        "ETHTOOL_GSSET_INFO",
+        "ETHTOOL_GSTRINGS",
+        "ETHTOOL_GFEATURES",
+        "ETHTOOL_SFEATURES",
+        "ETHTOOL_GFEATURES",
+        "ETHTOOL_GSSET_INFO",
+        "ETHTOOL_GSTRINGS",
+        "ETHTOOL_GFEATURES",
+        "ETHTOOL_SFEATURES",
+        "ETHTOOL_GFEATURES",
+      ]);
     });
 
     it("should turn off generic receive offload, but not the features it is a prefix of", () => {
@@ -154,7 +219,15 @@ describe("ethtool", () => {
     it("should turn off several offloads", () => {
       const { disableOffloads, activeFeatures } = setup();
 
-      const offloads: TOffloadName[] = ["tcp-segmentation-offload", "generic-segmentation-offload", "generic-receive-offload"];
+      const offloads: TOffloadName[] = [
+        "tx-checksumming",
+        "tcp-segmentation-offload",
+        "tx-udp-segmentation",
+        "generic-segmentation-offload",
+        "generic-receive-offload",
+        "rx-gro-hw",
+        "large-receive-offload",
+      ];
       assert.deepStrictEqual(disableOffloads({ offloads }), { error: undefined });
 
       assert.deepStrictEqual(activeFeatures(), []);
@@ -175,7 +248,7 @@ describe("ethtool", () => {
 
       assert.deepStrictEqual(disableOffloads({ offloads: ["tcp-segmentation-offload"] }), { error: undefined });
 
-      assert.deepStrictEqual(activeFeatures(), ["tx-generic-segmentation", "rx-gro"]);
+      assert.deepStrictEqual(activeFeatures(), defaultActiveFeaturesWithout({ names: tsoFeatureNames }));
     });
 
     it("should fail if they are on", () => {
@@ -202,7 +275,11 @@ describe("ethtool", () => {
 
       assert.deepStrictEqual(disableOffloads({ offloads: ["tcp-segmentation-offload"] }), { error: undefined });
 
-      assert.deepStrictEqual(activeFeatures(), ["tx-generic-segmentation", "rx-gro", "tx-tcp-mangleid-segmentation"]);
+      assert.deepStrictEqual(activeFeatures(), defaultActiveFeaturesWithout({
+        names: tsoFeatureNames.filter((name) => {
+          return name !== "tx-tcp-mangleid-segmentation";
+        })
+      }));
     });
 
     it("should leave features alone that never change", () => {
@@ -213,6 +290,32 @@ describe("ethtool", () => {
       assert.deepStrictEqual(disableOffloads({ offloads: ["tcp-segmentation-offload"] }), { error: undefined });
 
       assert.ok(activeFeatures().includes("tx-tcp6-segmentation"));
+    });
+
+    it("should fail for an offload without legacy flag whose feature stays on", () => {
+      const { disableOffloads } = setup({ features: featuresWith({ changes: { "rx-gro-hw": { changeable: false } } }) });
+
+      const { error } = disableOffloads({ offloads: ["rx-gro-hw"] });
+
+      assert.strictEqual(error?.message, `could not disable rx-gro-hw of interface "eth0"`);
+    });
+
+    it("should succeed for an offload without legacy flag whose feature is off already", () => {
+      const { disableOffloads } = setup({
+        features: featuresWith({ changes: { "rx-gro-hw": { active: false, changeable: false } } })
+      });
+
+      assert.deepStrictEqual(disableOffloads({ offloads: ["rx-gro-hw"] }), { error: undefined });
+    });
+
+    it("should succeed for an offload the kernel does not know, like rx-gro-hw before Linux 4.16", () => {
+      const { disableOffloads } = setup({
+        features: createDefaultFeatures().filter((feature) => {
+          return feature.name !== "rx-gro-hw";
+        })
+      });
+
+      assert.deepStrictEqual(disableOffloads({ offloads: ["rx-gro-hw"] }), { error: undefined });
     });
   });
 

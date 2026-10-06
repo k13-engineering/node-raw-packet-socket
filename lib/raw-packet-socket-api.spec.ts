@@ -135,6 +135,10 @@ describe("raw packet socket API", () => {
         disableTcpSegmentationOffloadUntilReboot: true,
         disableGenericSegmentationOffloadUntilReboot: true,
         disableGenericReceiveOffloadUntilReboot: true,
+        disableHardwareGenericReceiveOffloadUntilReboot: true,
+        disableLargeReceiveOffloadUntilReboot: true,
+        disableUdpSegmentationOffloadUntilReboot: true,
+        disableTransmitChecksumOffloadUntilReboot: true,
       });
 
       assert.deepStrictEqual(fakeKernel.interfaceState({ name: "eth0" }).activeFeatures, []);
@@ -153,6 +157,7 @@ describe("raw packet socket API", () => {
 
       const { activeFeatures } = fakeKernel.interfaceState({ name: "eth0" });
       assert.ok(!activeFeatures.includes("rx-gro"));
+      assert.ok(activeFeatures.includes("rx-gro-hw"));
       assert.ok(activeFeatures.includes("tx-generic-segmentation"));
       assert.ok(activeFeatures.includes("tx-tcp-segmentation"));
 

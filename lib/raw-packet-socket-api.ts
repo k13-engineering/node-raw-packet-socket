@@ -14,6 +14,10 @@ type TCreateNodeDuplexByInterfaceIndexArgs = {
   disableTcpSegmentationOffloadUntilReboot?: boolean;
   disableGenericSegmentationOffloadUntilReboot?: boolean;
   disableGenericReceiveOffloadUntilReboot?: boolean;
+  disableHardwareGenericReceiveOffloadUntilReboot?: boolean;
+  disableLargeReceiveOffloadUntilReboot?: boolean;
+  disableUdpSegmentationOffloadUntilReboot?: boolean;
+  disableTransmitChecksumOffloadUntilReboot?: boolean;
   enablePromiscuousMode?: boolean;
 };
 
@@ -32,19 +36,20 @@ type TOpenSocketResult = {
   socket: TSocket;
 };
 
-const offloadsToDisableFor = ({
-  disableTcpSegmentationOffloadUntilReboot = false,
-  disableGenericSegmentationOffloadUntilReboot = false,
-  disableGenericReceiveOffloadUntilReboot = false,
-}: TCreateNodeDuplexByInterfaceIndexArgs): TOffloadName[] => {
-  const offloads: [TOffloadName, boolean][] = [
-    ["tcp-segmentation-offload", disableTcpSegmentationOffloadUntilReboot],
-    ["generic-segmentation-offload", disableGenericSegmentationOffloadUntilReboot],
-    ["generic-receive-offload", disableGenericReceiveOffloadUntilReboot],
-  ];
+// the option that asks to disable each offload
+const offloadOptions: [TOffloadName, keyof TCreateNodeDuplexByInterfaceIndexArgs][] = [
+  ["tcp-segmentation-offload", "disableTcpSegmentationOffloadUntilReboot"],
+  ["generic-segmentation-offload", "disableGenericSegmentationOffloadUntilReboot"],
+  ["generic-receive-offload", "disableGenericReceiveOffloadUntilReboot"],
+  ["rx-gro-hw", "disableHardwareGenericReceiveOffloadUntilReboot"],
+  ["large-receive-offload", "disableLargeReceiveOffloadUntilReboot"],
+  ["tx-udp-segmentation", "disableUdpSegmentationOffloadUntilReboot"],
+  ["tx-checksumming", "disableTransmitChecksumOffloadUntilReboot"],
+];
 
-  return offloads.filter(([, disable]) => {
-    return disable;
+const offloadsToDisableFor = (args: TCreateNodeDuplexByInterfaceIndexArgs): TOffloadName[] => {
+  return offloadOptions.filter(([, option]) => {
+    return args[option] === true;
   }).map(([offload]) => {
     return offload;
   });

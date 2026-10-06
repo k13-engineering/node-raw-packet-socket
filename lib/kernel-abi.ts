@@ -280,15 +280,18 @@ const constants = {
   SIOCGIFINDEX: 0x8933n,
   SIOCETHTOOL: 0x8946n,
 
+  ETHTOOL_GTXCSUM: 0x16n,
   ETHTOOL_GSTRINGS: 0x1bn,
   ETHTOOL_GTSO: 0x1en,
   ETHTOOL_GGSO: 0x23n,
+  ETHTOOL_GFLAGS: 0x25n,
   ETHTOOL_GGRO: 0x2bn,
   ETHTOOL_GSSET_INFO: 0x37n,
   ETHTOOL_GFEATURES: 0x3an,
   ETHTOOL_SFEATURES: 0x3bn,
 
   ETH_SS_FEATURES: 4n,
+  ETH_FLAG_LRO: 0x8000n,
 } as const;
 
 const createKernelAbiFor = ({ machineAbi }: { machineAbi: TAbi }) => {
