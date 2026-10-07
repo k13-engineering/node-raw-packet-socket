@@ -56,7 +56,9 @@ duplex.write(frame);
 
 `findInterfaceIndexByName()` returns `{ error, ifindex }` instead of throwing.
 
-`createNodeDuplexByInterfaceIndex()` returns the stream right away and opens the socket in another task. Once it is set up, the stream emits `"open"` and `"ready"`. Destroy the stream to close the socket. Ending it is an error, as an ethernet interface cannot be half-closed.
+`createNodeDuplexByInterfaceIndex()` opens, sets up and binds the socket before it returns the stream, but emits errors in another task, so they reach the listeners attached after the call. Then the stream emits `"open"` and `"ready"`. Destroy the stream to close the socket. Ending it is an error, as an ethernet interface cannot be half-closed.
+
+Interface indexes belong to a network namespace. The socket is opened in the network namespace of the calling thread at the time of the call, so a caller may enter the namespace of an interface with `setns()`, look up its index, create the stream and leave the namespace again right away.
 
 The options are:
 
@@ -117,7 +119,7 @@ The unit tests run against a fake kernel from `lib/test-support/`, which emulate
 - `lib/kernel-abi.spec.ts` compiles C programs to compare the structures and constants with the headers, so it needs `gcc` and the kernel headers
 - `lib/kernel.spec.ts` and `lib/index.spec.ts` use unprivileged syscalls of the host
 - `lib/build.spec.ts` builds the package and type-checks a consumer against its declarations
-- `lib/end-to-end.spec.ts` exchanges frames, also tagged ones, over a veth pair in a user and network namespace of its own. It needs `unshare` and `ip`, and skips where unprivileged user namespaces are not allowed.
+- `lib/end-to-end.spec.ts` exchanges frames, also tagged ones, over a veth pair in a user and network namespace of its own, and opens streams on a veth pair of another network namespace it enters only for the call. It needs `unshare` and `ip`, and skips where unprivileged user namespaces are not allowed.
 
 ## License
 

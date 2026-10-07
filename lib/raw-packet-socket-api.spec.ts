@@ -235,32 +235,82 @@ describe("raw packet socket API", () => {
       await destroy({ duplex });
     });
 
-    it("should not open a socket if destroyed right away", async () => {
-      const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
+    describe("timing", () => {
+      // the interface index belongs to the network namespace of the caller,
+      // who might switch namespaces again right after the call
+      it("should open, set up and bind the socket before it returns", async () => {
+        const duplex = api.createNodeDuplexByInterfaceIndex({
+          ifindex: eth0,
+          disableGenericReceiveOffloadUntilReboot: true,
+          enablePromiscuousMode: true,
+          ignoreOutgoingFrames: true,
+          restoreVlanTags: true,
+        });
 
-      await destroy({ duplex });
-      await new Promise((resolve) => {
-        setTimeout(resolve, 5);
+        const operationsWhenReturned = operations();
+        assert.deepStrictEqual(operationsWhenReturned.slice(0, 4), ["socket:AF_PACKET", "setsockopt", "setsockopt", "bind"]);
+        assert.deepStrictEqual(operationsWhenReturned.slice(-3), ["close", "setsockopt", "PACKET_ADD_MEMBERSHIP"]);
+        assert.ok(!fakeKernel.interfaceState({ name: "eth0" }).activeFeatures.includes("rx-gro"));
+        assert.strictEqual(fakeKernel.interfaceState({ name: "eth0" }).promiscuity, 1);
+
+        await new Promise((resolve) => {
+          duplex.once("ready", resolve);
+        });
+
+        assert.deepStrictEqual(operations().slice(0, operationsWhenReturned.length), operationsWhenReturned);
+
+        await destroy({ duplex });
       });
 
-      assert.deepStrictEqual(fakeKernel.calls(), []);
-    });
+      it("should receive the frames arriving right after it returns", async () => {
+        const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
 
-    it("should not emit ready if destroyed when open", async () => {
-      const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
+        const incoming = createFrame({ payload: "early" });
+        fakeKernel.receiveFrame({ ifindex: eth0, frame: incoming });
 
-      let ready = false;
-      duplex.once("ready", () => {
-        ready = true;
+        const received = await new Promise<Uint8Array>((resolve) => {
+          duplex.once("data", resolve);
+        });
+        assert.deepStrictEqual(new Uint8Array(received), incoming);
+
+        await destroy({ duplex });
       });
 
-      const duplexClosed = closed({ duplex });
-      duplex.once("open", () => {
-        duplex.destroy();
-      });
-      await duplexClosed;
+      it("should close the socket if destroyed right away", async () => {
+        const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
 
-      assert.strictEqual(ready, false);
+        let events: string[] = [];
+        ["open", "ready", "error"].forEach((event) => {
+          duplex.once(event, () => {
+            events = [...events, event];
+          });
+        });
+
+        await destroy({ duplex });
+        await new Promise((resolve) => {
+          setTimeout(resolve, 5);
+        });
+
+        assert.deepStrictEqual(operations(), ["socket:AF_PACKET", "bind", "close"]);
+        assert.deepStrictEqual(events, []);
+      });
+
+      it("should not emit ready if destroyed when open", async () => {
+        const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: eth0 });
+
+        let ready = false;
+        duplex.once("ready", () => {
+          ready = true;
+        });
+
+        const duplexClosed = closed({ duplex });
+        duplex.once("open", () => {
+          duplex.destroy();
+        });
+        await duplexClosed;
+
+        assert.strictEqual(ready, false);
+      });
     });
 
     describe("errors", () => {
@@ -276,6 +326,39 @@ describe("raw packet socket API", () => {
         const error = await openFailure({ ifindex: 42 });
 
         assert.strictEqual(error.message, "bind() failed with ENODEV: No such device");
+      });
+
+      it("should close the socket before it returns, but report the error in another task", async () => {
+        const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: 42 });
+
+        assert.deepStrictEqual(operations(), ["socket:AF_PACKET", "bind", "close"]);
+        assert.deepStrictEqual(fakeKernel.openFds(), []);
+
+        await Promise.resolve();
+
+        const duplexClosed = closed({ duplex });
+        const error = await new Promise<Error>((resolve) => {
+          duplex.once("error", resolve);
+        });
+        await duplexClosed;
+
+        assert.strictEqual(error.message, "bind() failed with ENODEV: No such device");
+      });
+
+      it("should not report the error if destroyed right away", async () => {
+        const duplex = api.createNodeDuplexByInterfaceIndex({ ifindex: 42 });
+
+        let errored = false;
+        duplex.once("error", () => {
+          errored = true;
+        });
+
+        await destroy({ duplex });
+        await new Promise((resolve) => {
+          setTimeout(resolve, 5);
+        });
+
+        assert.strictEqual(errored, false);
       });
 
       it("should fail if the interface name cannot be found to disable offloads", async () => {

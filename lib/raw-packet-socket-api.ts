@@ -161,28 +161,29 @@ const createRawPacketSocketApi = ({
 
     const duplex = duplexify();
 
-    // all errors should raise "error" events, therefore we do our work in another task
-    setTimeout(() => {
+    // the socket is set up right away, as the interface index only means
+    // something in the network namespace of the caller, which might switch
+    // namespaces again before the next task
+    const { error, socket } = openSocket({ args });
 
-      if (duplex.destroyed) {
-        return;
-      }
-
-      const { error, socket } = openSocket({ args });
-      if (error !== undefined) {
+    // all errors should raise "error" events, therefore we report them in another task
+    if (error !== undefined) {
+      setTimeout(() => {
         duplex.destroy(error);
-        return;
-      }
+      }, 0);
+      return duplex;
+    }
 
-      const socketDuplex = createAndSteal({
-        socket,
-        errnoCodes: kernelAbi.po6.errnoCodes,
-        createErrorFromErrno: po6.createErrorFromErrno,
-        frameRestorer: args.restoreVlanTags === true ? vlanTagRestorer : keepFrames
-      });
-      duplex.setReadable(socketDuplex);
-      duplex.setWritable(socketDuplex);
+    const socketDuplex = createAndSteal({
+      socket,
+      errnoCodes: kernelAbi.po6.errnoCodes,
+      createErrorFromErrno: po6.createErrorFromErrno,
+      frameRestorer: args.restoreVlanTags === true ? vlanTagRestorer : keepFrames
+    });
+    duplex.setReadable(socketDuplex);
+    duplex.setWritable(socketDuplex);
 
+    setTimeout(() => {
       emitOpenAndReady({ duplex });
     }, 0);
 

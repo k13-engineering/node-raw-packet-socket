@@ -10,6 +10,7 @@ import nodeProcess from "node:process";
 // namespaces or iproute2 are not available.
 
 const scriptPath = nodePath.join(import.meta.dirname, "test-support", "end-to-end-script.ts");
+const networkNamespaceScriptPath = nodePath.join(import.meta.dirname, "test-support", "network-namespace-script.ts");
 
 const runInNetworkNamespace = ({ script }: { script: string }) => {
   return nodeChildProcess.execFileSync("unshare", ["--user", "--map-root-user", "--net", "sh", "-c", script], {
@@ -61,5 +62,30 @@ describeIfNamespaces("end to end", () => {
     if (result.offloadsWithoutSocket !== undefined) {
       assert.deepStrictEqual(result.offloadsWithoutSocket, ["tx-checksumming: off"]);
     }
+  }).timeout(30_000);
+
+  // like a caller that enters the namespace of an interface only to open the stream
+  it("should bind to the interface of the network namespace it was called in", () => {
+    const output = runInNetworkNamespace({
+      script: [
+        "ip link add decoy0 type veth peer name decoy1",
+        "ip link set decoy0 up",
+        "ip link set decoy1 up",
+        `"${nodeProcess.execPath}" "${networkNamespaceScriptPath}"`,
+      ].join(" && ")
+    });
+
+    const result = JSON.parse(output);
+
+    // the same indexes, so a socket bound in the wrong namespace would work as well
+    assert.deepStrictEqual(result.decoyIfindexes, { decoy0: result.ifindexes.veth0, decoy1: result.ifindexes.veth1 });
+
+    assert.deepStrictEqual(result.packetSocketInterfaces, {
+      own: [],
+      other: [result.ifindexes.veth0, result.ifindexes.veth1].toSorted((a, b) => {
+        return a - b;
+      }),
+    });
+    assert.strictEqual(result.received, "hello from veth1");
   }).timeout(30_000);
 });
