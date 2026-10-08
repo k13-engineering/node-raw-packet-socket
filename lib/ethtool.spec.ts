@@ -183,6 +183,34 @@ describe("ethtool", () => {
       ]);
     });
 
+    it("should turn off the VLAN filter, but not the one of 802.1ad, as ethtool does", () => {
+      const { disableOffloads, activeFeatures, ethtoolCommands } = setup({
+        features: featuresWith({ changes: { "rx-vlan-stag-filter": { active: true, changeable: true } } })
+      });
+
+      assert.deepStrictEqual(disableOffloads({ offloads: ["rx-vlan-filter"] }), { error: undefined });
+
+      assert.ok(activeFeatures().includes("rx-vlan-stag-filter"));
+      assert.deepStrictEqual(activeFeatures().filter((name) => {
+        return name !== "rx-vlan-stag-filter";
+      }), defaultActiveFeaturesWithout({ names: ["rx-vlan-filter"] }));
+      assert.deepStrictEqual(ethtoolCommands(), [
+        "ETHTOOL_GSSET_INFO",
+        "ETHTOOL_GSTRINGS",
+        "ETHTOOL_GFEATURES",
+        "ETHTOOL_SFEATURES",
+        "ETHTOOL_GFEATURES",
+      ]);
+    });
+
+    it("should fail to turn off a VLAN filter the device does not allow changing, e.g. of virtio-net", () => {
+      const { disableOffloads } = setup({ features: featuresWith({ changes: { "rx-vlan-filter": { changeable: false } } }) });
+
+      const { error } = disableOffloads({ offloads: ["rx-vlan-filter"] });
+
+      assert.strictEqual(error?.message, `could not disable rx-vlan-filter of interface "eth0"`);
+    });
+
     it("should turn off generic receive offload, but not the features it is a prefix of", () => {
       const { disableOffloads, activeFeatures } = setup({
         features: featuresWith({
@@ -227,6 +255,7 @@ describe("ethtool", () => {
         "generic-receive-offload",
         "rx-gro-hw",
         "large-receive-offload",
+        "rx-vlan-filter",
       ];
       assert.deepStrictEqual(disableOffloads({ offloads }), { error: undefined });
 

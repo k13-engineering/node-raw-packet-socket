@@ -101,11 +101,12 @@ const defaultFeatureNames = [
   "hsr-tag-rm-offload", "hsr-fwd-offload", "hsr-dup-offload",
 ];
 
+// the offloads, and the VLAN filter, which most NICs have on as well
 const offloadFeatureNames = [
   "tx-checksum-ip-generic", "tx-checksum-sctp",
   "tx-generic-segmentation", "rx-gro", "rx-gro-hw", "rx-lro",
   "tx-tcp-segmentation", "tx-tcp-ecn-segmentation", "tx-tcp-mangleid-segmentation", "tx-tcp6-segmentation",
-  "tx-tcp-accecn-segmentation", "tx-udp-segmentation",
+  "tx-tcp-accecn-segmentation", "tx-udp-segmentation", "rx-vlan-filter",
 ];
 
 // the features the legacy flags stand for in the kernel, e.g. NETIF_F_ALL_TSO for ETHTOOL_GTSO

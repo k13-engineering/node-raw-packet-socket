@@ -36,6 +36,7 @@ const offloadLine = new RegExp(`^(${[
   "generic-receive-offload",
   "rx-gro-hw",
   "large-receive-offload",
+  "rx-vlan-filter",
 ].join("|")}):`);
 
 // ethtool is not needed by the library, but checks its work independently where available
@@ -66,6 +67,7 @@ const receiver = createNodeDuplexByInterfaceIndex({
   disableLargeReceiveOffloadUntilReboot: true,
   disableUdpSegmentationOffloadUntilReboot: true,
   disableTransmitChecksumOffloadUntilReboot: true,
+  disableVlanFilterUntilReboot: true,
   enablePromiscuousMode: true,
   restoreVlanTags: true,
 });

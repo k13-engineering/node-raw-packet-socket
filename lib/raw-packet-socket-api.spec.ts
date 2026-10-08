@@ -140,6 +140,7 @@ describe("raw packet socket API", () => {
         disableLargeReceiveOffloadUntilReboot: true,
         disableUdpSegmentationOffloadUntilReboot: true,
         disableTransmitChecksumOffloadUntilReboot: true,
+        disableVlanFilterUntilReboot: true,
       });
 
       assert.deepStrictEqual(fakeKernel.interfaceState({ name: "eth0" }).activeFeatures, []);
@@ -161,6 +162,7 @@ describe("raw packet socket API", () => {
       assert.ok(activeFeatures.includes("rx-gro-hw"));
       assert.ok(activeFeatures.includes("tx-generic-segmentation"));
       assert.ok(activeFeatures.includes("tx-tcp-segmentation"));
+      assert.ok(activeFeatures.includes("rx-vlan-filter"));
 
       await destroy({ duplex });
     });

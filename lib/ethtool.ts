@@ -9,7 +9,8 @@ type TOffloadName =
   "generic-segmentation-offload" |
   "generic-receive-offload" |
   "rx-gro-hw" |
-  "large-receive-offload";
+  "large-receive-offload" |
+  "rx-vlan-filter";
 
 type TLegacyFlag = {
   command: "ETHTOOL_GTXCSUM" | "ETHTOOL_GTSO" | "ETHTOOL_GGSO" | "ETHTOOL_GGRO" | "ETHTOOL_GFLAGS";
@@ -63,8 +64,8 @@ type TInspectResult = {
 // the offloads of `ethtool -K` with the pattern of the kernel feature names
 // they stand for and their legacy flag, from off_flag_def in ethtool's
 // common.c; ethtool reads the flag of LRO from the bitmap of ETHTOOL_GFLAGS.
-// rx-gro-hw and tx-udp-segmentation are kernel feature names without a
-// legacy flag, which ethtool -K takes as they are.
+// rx-gro-hw, tx-udp-segmentation and rx-vlan-filter are kernel feature
+// names without a legacy flag, which ethtool -K takes as they are.
 const offloadDefinitions: { [offload in TOffloadName]: TOffloadDefinition } = {
   "tx-checksumming": { featurePattern: "tx-checksum-*", legacyFlag: { command: "ETHTOOL_GTXCSUM", bit: undefined } },
   "tcp-segmentation-offload": { featurePattern: "tx-tcp*-segmentation", legacyFlag: { command: "ETHTOOL_GTSO", bit: undefined } },
@@ -73,6 +74,7 @@ const offloadDefinitions: { [offload in TOffloadName]: TOffloadDefinition } = {
   "generic-receive-offload": { featurePattern: "rx-gro", legacyFlag: { command: "ETHTOOL_GGRO", bit: undefined } },
   "rx-gro-hw": { featurePattern: "rx-gro-hw", legacyFlag: undefined },
   "large-receive-offload": { featurePattern: "rx-lro", legacyFlag: { command: "ETHTOOL_GFLAGS", bit: "ETH_FLAG_LRO" } },
+  "rx-vlan-filter": { featurePattern: "rx-vlan-filter", legacyFlag: undefined },
 };
 
 const bitsPerBlock = 32;

@@ -20,6 +20,7 @@ type TCreateNodeDuplexByInterfaceIndexArgs = {
   disableLargeReceiveOffloadUntilReboot?: boolean;
   disableUdpSegmentationOffloadUntilReboot?: boolean;
   disableTransmitChecksumOffloadUntilReboot?: boolean;
+  disableVlanFilterUntilReboot?: boolean;
   enablePromiscuousMode?: boolean;
   ignoreOutgoingFrames?: boolean;
   restoreVlanTags?: boolean;
@@ -55,6 +56,7 @@ const offloadOptions: [TOffloadName, keyof TCreateNodeDuplexByInterfaceIndexArgs
   ["large-receive-offload", "disableLargeReceiveOffloadUntilReboot"],
   ["tx-udp-segmentation", "disableUdpSegmentationOffloadUntilReboot"],
   ["tx-checksumming", "disableTransmitChecksumOffloadUntilReboot"],
+  ["rx-vlan-filter", "disableVlanFilterUntilReboot"],
 ];
 
 const offloadsToDisableFor = (args: TCreateNodeDuplexByInterfaceIndexArgs): TOffloadName[] => {

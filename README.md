@@ -71,6 +71,7 @@ The options are:
 | `disableLargeReceiveOffloadUntilReboot` | like `ethtool -K <interface> lro off` |
 | `disableUdpSegmentationOffloadUntilReboot` | like `ethtool -K <interface> tx-udp-segmentation off` |
 | `disableTransmitChecksumOffloadUntilReboot` | like `ethtool -K <interface> tx off` |
+| `disableVlanFilterUntilReboot` | like `ethtool -K <interface> rx-vlan-filter off` |
 | `enablePromiscuousMode` | `PACKET_MR_PROMISC` membership for as long as the socket is open |
 | `ignoreOutgoingFrames` | `PACKET_IGNORE_OUTGOING`, only receive the frames arriving on the interface, Linux 4.20 or newer |
 | `restoreVlanTags` | put the VLAN tags back into the received frames, from `PACKET_AUXDATA` like libpcap |
@@ -80,6 +81,8 @@ Besides the frames arriving on the interface, the stream receives the frames the
 The kernel takes the outermost VLAN tag out of every frame it receives before a packet socket sees it, also without hardware offload, and keeps it out of the frames it sends with VLAN offload. `restoreVlanTags` puts it back between the source address and the ethertype, with its TPID, e.g. `0x8100` for 802.1Q or `0x88a8` for 802.1ad.
 
 The receive offloads merge frames before the socket sees them. The transmit offloads leave the outgoing frames of the host unfinished where the socket sees them: oversized with segmentation offloads, with unfinished checksums with checksum offload. Turning off checksum offload makes the kernel turn off TCP and UDP segmentation offload as well.
+
+Many NICs filter VLANs in hardware and drop the frames of the VLANs the host has not set up, depending on the driver also in promiscuous mode. `disableVlanFilterUntilReboot` turns that filter off, so the stream receives the frames of every VLAN. Like `ethtool`, it leaves the filter of 802.1ad tags, `rx-vlan-stag-filter`, alone.
 
 The offloads stay disabled until the interface goes away, e.g. on reboot. Like `ethtool`, the ioctls address the interface by name, so renaming it while the socket is set up affects the wrong interface or fails.
 
@@ -94,13 +97,13 @@ const { error } = disableOffloadsUntilReboot({
 });
 ```
 
-It takes the names `ethtool -k` shows: `tx-checksumming`, `tcp-segmentation-offload`, `tx-udp-segmentation`, `generic-segmentation-offload`, `generic-receive-offload`, `rx-gro-hw` and `large-receive-offload`. Like `findInterfaceIndexByName()`, it returns `{ error }` instead of throwing.
+It takes the names `ethtool -k` shows: `tx-checksumming`, `tcp-segmentation-offload`, `tx-udp-segmentation`, `generic-segmentation-offload`, `generic-receive-offload`, `rx-gro-hw`, `large-receive-offload` and `rx-vlan-filter`. Like `findInterfaceIndexByName()`, it returns `{ error }` instead of throwing.
 
 ## How it works
 
 The library performs the syscalls with [po6](https://www.npmjs.com/package/po6) and [syscall-napi](https://www.npmjs.com/package/syscall-napi), pins buffers handed to the kernel with [buffer2address](https://www.npmjs.com/package/buffer2address), and waits for the socket in the event loop with [@k13engineering/uv-poll](https://www.npmjs.com/package/@k13engineering/uv-poll). The kernel structures are described with [ya-struct](https://www.npmjs.com/package/ya-struct) and compared with the C headers in the tests.
 
-Disabling an offload works like `do_sfeatures()` in ethtool without netlink. It reads the feature names and their state, turns off the features matching the offload (e.g. `tx-checksum-*` or `tx-tcp*-segmentation`) that the device allows changing, and only fails if nothing changed while the offload is still on. Whether it is on comes from its legacy flag, e.g. `ETHTOOL_GTSO`, or from its features for `rx-gro-hw` and `tx-udp-segmentation`, which have none.
+Disabling an offload works like `do_sfeatures()` in ethtool without netlink. It reads the feature names and their state, turns off the features matching the offload (e.g. `tx-checksum-*` or `tx-tcp*-segmentation`) that the device allows changing, and only fails if nothing changed while the offload is still on. Whether it is on comes from its legacy flag, e.g. `ETHTOOL_GTSO`, or from its features for `rx-gro-hw`, `tx-udp-segmentation` and `rx-vlan-filter`, which have none.
 
 ## Development
 

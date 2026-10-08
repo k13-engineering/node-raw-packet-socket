@@ -34,7 +34,7 @@ if (result.error === undefined) {
   const args: TCreateNodeDuplexByInterfaceIndexArgs = { ifindex, enablePromiscuousMode: true };
   createNodeDuplexByInterfaceIndex(args).destroy();
 
-  const offloads: TOffloadName[] = ["generic-receive-offload", "rx-gro-hw"];
+  const offloads: TOffloadName[] = ["generic-receive-offload", "rx-gro-hw", "rx-vlan-filter"];
   const { error }: { error: Error | undefined } = disableOffloadsUntilReboot({ ifindex, offloads });
 }
 
